@@ -18,11 +18,11 @@ public:
 
 	~Backend();
 
-	int initial(const std::shared_ptr<NodeInfo>&, const fntOnNetPacket&);
+	int initial(const std::shared_ptr<NodeInfo>&, const fntOnNetPacket&, const fntOnConnStatus&);
 
 	void stop() override;
 
-	int connRemote(const fntOnConnStatus &fnOnStatus);
+	int connRemote();
 
 protected:
 	using socket = boost::asio::ip::tcp::socket;

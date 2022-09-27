@@ -5,7 +5,8 @@ class Frontend : virtual public baseConn
 public:
 	Frontend();
 
-	int initial(std::shared_ptr<boost::asio::ip::tcp::socket>&&, const fntOnNetPacket&);
+	int initial(std::shared_ptr<socket>&&, \
+	 const fntOnNetPacket&, const fntOnConnStatus&);
 
 	~Frontend();
 

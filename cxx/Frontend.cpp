@@ -11,12 +11,13 @@ Frontend::~Frontend()
 {
 }
 
-int Frontend::initial(std::shared_ptr<boost::asio::ip::tcp::socket>&& spSocket, const fntOnNetPacket& fnOnPacket)
+int Frontend::initial(std::shared_ptr<socket>&& spSocket, \
+ const fntOnNetPacket& fnOnPacket, const fntOnConnStatus& fnOnConnStatus)
 {
 	m_spSocket = spSocket;
 	m_spStrand = IO_EXCUTOR.pick_blader()->spStrand;
 	m_fnOnPacket = fnOnPacket;
-
+	m_fnOnConnStatus = fnOnConnStatus;
 	return 0;
 }
 

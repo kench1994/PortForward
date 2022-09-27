@@ -81,6 +81,7 @@ void forwarder::onListen(\
 
 	fprintf(stdout, "onListen\r\n");
 
+	auto id = m_spIdGen->increase();
 	auto spFrontend = std::make_shared<Frontend>();
 	auto spBackend = std::make_shared<Backend>();
 
@@ -106,8 +107,22 @@ void forwarder::onListen(\
 		//转发数据流量
 		auto spPacket = std::make_shared<PACKET>(std::forward<boost::shared_array<char>&&>(spszBuff), uBufLen);
 		spBackend->addToSendChains(spPacket);
+
+	}, [wspBack](const int& nErrorCode, const char* pszErrInfo){
+		if(0 == nErrorCode){
+			//TODO:未处理
+			return;
+		}
+		//TODO:通知relay？？
+		std::shared_ptr<Backend> spBackend;
+		if (wspBack.expired() || CHECK_PROMT_WSP_FAILED(spBackend, wspBack))
+			return;
+		spBackend->stop();
 	});
 
+	//TODO:frontend 断开 通知backend 断开
+	//backend断开删除这个relay
+	//前端可以统计forwarder持有的relay（连接数等信息
 
 	std::weak_ptr<Frontend> wspFront(spFrontend);
 	spBackend->initial(m_spNodeInfo, [wspFront](boost::shared_array<char>&& spszBuff, unsigned int uBufLen, const int& nError, const char* pszErrInfo) {
@@ -129,6 +144,18 @@ void forwarder::onListen(\
 		//转发数据流量
 		auto spPacket = std::make_shared<PACKET>(std::forward<boost::shared_array<char>&&>(spszBuff), uBufLen);
 		spFrontend->addToSendChains(spPacket);
+
+	}, [this, id](const int& nErrorCode, const char* pszErrInfo){
+		if(0 == nErrorCode){
+			//TODO:未处理
+			return;
+		}
+		//Backend断开删除这个relay
+		std::unique_lock<std::mutex> lck(m_mtxRelays);
+		auto itF = m_mapRelays.find(id);
+		if(itF == m_mapRelays.end())
+			return;
+		m_mapRelays.erase(itF);
 	});
 
 	auto spRelay = std::make_shared<relay>(spFrontend, spBackend);
@@ -137,7 +164,6 @@ void forwarder::onListen(\
 		return;
 	}
 
-	auto id = m_spIdGen->increase();
 	std::unique_lock<std::mutex> lck(m_mtxRelays);
 	m_mapRelays[id] = spRelay;
 	lck.unlock();

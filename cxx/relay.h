@@ -10,15 +10,12 @@ public:
 	using fnt_OnNodeNotify = std::function<void(int, const char*)>;
 
 	relay() = delete;
-	explicit relay(std::shared_ptr<Frontend> spFrontend, std::shared_ptr<Backend> spBackend);
+	explicit relay(std::shared_ptr<baseConn> spFrontend, std::shared_ptr<baseConn> spBackend);
 	~relay();
 
 	int start();
 
 	void stop();
-
-	//TODO:Node
-	void setOnBackendStatus(const fnt_OnNodeNotify& fnNotify);
 
 protected:
 
@@ -27,12 +24,12 @@ private:
 
 
 	//下游服务器
-	std::shared_ptr<Backend> m_spBackend;
+	std::shared_ptr<baseConn> m_spBackend;
 	
 	//上游数据入口
-	std::shared_ptr<Frontend> m_spFrontend;
+	std::shared_ptr<baseConn> m_spFrontend;
 
-
+	//TODO
 	//通知外部后端状态变化
 	fnt_OnNodeNotify m_fnOnStatus;
 

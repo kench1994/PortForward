@@ -17,10 +17,12 @@ Backend::~Backend()
 }
 
 
-int Backend::initial(const std::shared_ptr<NodeInfo>& spNodeInfo, const fntOnNetPacket& fnOnPacket)
+int Backend::initial(const std::shared_ptr<NodeInfo>& spNodeInfo, \
+ const fntOnNetPacket& fnOnPacket, const fntOnConnStatus& fnOnConnStatus)
 {
 	m_spNodeInfo = spNodeInfo;
 	m_fnOnPacket = fnOnPacket;
+	m_fnOnConnStatus = fnOnConnStatus;
 	return 0;
 }
 
@@ -30,7 +32,7 @@ void Backend::stop()
 
 }
 
-int Backend::connRemote(const fntOnConnStatus &fnOnStatus)
+int Backend::connRemote()
 {
 	//不重复连接
 	if (_enConnStatus::connected == m_auStaus.load())
@@ -51,10 +53,11 @@ int Backend::connRemote(const fntOnConnStatus &fnOnStatus)
 	auto resolver_result = resolver.resolve(query, ec);
 	if (ec) {
 		//TODO:通知失败
-		fnOnStatus(ec.value(), ec.message().c_str());
+		if(m_fnOnConnStatus)
+			m_fnOnConnStatus(ec.value(), ec.message().c_str());
 		return -1;
 	}
-	m_fnOnConnStatus = fnOnStatus;
+
 	auto spSocket = std::make_shared<socket>(resolver.get_executor());
 	boost::asio::async_connect(*spSocket, resolver_result,
 		std::bind(&Backend::onConned, this, spSocket, std::placeholders::_1)
