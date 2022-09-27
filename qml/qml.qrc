@@ -1,0 +1,7 @@
+<RCC>
+    <qresource prefix="/">
+        <file>main.qml</file>
+        <file>AddPlane.ui.qml</file>
+        <file>QTable.qml</file>
+    </qresource>
+</RCC>

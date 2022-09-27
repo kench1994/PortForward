@@ -1,0 +1,8 @@
+.vs/
+Debug/
+*.VC.db
+build*/
+*.user
+*.user.*
+.xmake/
+vsxmake*/
