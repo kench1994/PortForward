@@ -11,7 +11,6 @@ MainWindow::MainWindow(QWidget *parent)
     auto *pHorizontalHeader = ui->tableWidget->horizontalHeader();
     pHorizontalHeader->setSectionResizeMode(QHeaderView::Stretch);
     pHorizontalHeader->setMinimumHeight(60);
-    //pHorizontalHeader->setFont(QFont("Microsoft YaHei UI", 14));
     ui->tableWidget->setHorizontalHeaderLabels({u8"监听端口", u8"下游服务器", u8"连接数", u8"实时流量", u8"启动/暂停"});
     ui->tableWidget->setStyleSheet(
             "QTableWidget{ color:black; \
