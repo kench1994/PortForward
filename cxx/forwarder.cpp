@@ -79,26 +79,26 @@ void forwarder::onListen(\
 		return;
 	}
 
-	fprintf(stdout, "onListen\r\n");
+	fprintf(stdout, "conn join\r\n");
 
 	auto id = m_spIdGen->increase();
 	auto spFrontend = std::make_shared<Frontend>();
+	spFrontend->setRole("Front-end");
 	auto spBackend = std::make_shared<Backend>();
+	spBackend->setRole("Back-end");
 
 	std::weak_ptr<Backend> wspBack(spBackend);
 	spFrontend->initial(std::move(spSocket), [wspBack, this](boost::shared_array<char>&& spszBuff, unsigned int uBufLen, const int& nError, const char* pszErrInfo) {
-		//TODO:终止状态
 
-		fprintf(stdout, "onFrontDataLen :%u\r\n", uBufLen);
+		fprintf(stdout, "Front-end flow in %u\r\n", uBufLen);
 
 		std::shared_ptr<Backend> spBackend;
 		if (wspBack.expired() || CHECK_PROMT_WSP_FAILED(spBackend, wspBack))
 			return;
 
-		if (nError)
-		{
-			//TODO
-			//spBackend->toldShutdown();
+		if (nError) {
+			//TODO:通知前端
+			spBackend->stop();
 			return;
 		}
 		if (!uBufLen)
@@ -108,34 +108,39 @@ void forwarder::onListen(\
 		auto spPacket = std::make_shared<PACKET>(std::forward<boost::shared_array<char>&&>(spszBuff), uBufLen);
 		spBackend->addToSendChains(spPacket);
 
-	}, [wspBack](const int& nErrorCode, const char* pszErrInfo){
-		if(0 == nErrorCode){
-			//TODO:未处理
+	}, [this, id](const int& nErrorCode, const char* pszErrInfo){
+
+		assert(nErrorCode);
+
+		fprintf(stdout, "Front-end has disconnected\r\n");
+
+		std::unique_lock<std::mutex> lck(m_mtxRelays);
+		auto itF = m_mapRelays.find(id);
+		if (itF == m_mapRelays.end())
 			return;
-		}
-		//TODO:通知relay？？
-		std::shared_ptr<Backend> spBackend;
-		if (wspBack.expired() || CHECK_PROMT_WSP_FAILED(spBackend, wspBack))
-			return;
-		spBackend->stop();
+		auto spRelay = itF->second;
+		m_mapRelays.erase(itF);
+		lck.unlock();
+
+		spRelay->getBackend()->stop();
 	});
 
 	//TODO:frontend 断开 通知backend 断开
 	//backend断开删除这个relay
 	//前端可以统计forwarder持有的relay（连接数等信息
 
+	//TODO：通知前端
 	std::weak_ptr<Frontend> wspFront(spFrontend);
 	spBackend->initial(m_spNodeInfo, [wspFront](boost::shared_array<char>&& spszBuff, unsigned int uBufLen, const int& nError, const char* pszErrInfo) {
 
-		fprintf(stdout, "onBackDataLen :%u\r\n", uBufLen);
+		fprintf(stdout, "Back-end flow in %u\r\n", uBufLen);
 
 		std::shared_ptr<Frontend> spFrontend;
 		if (wspFront.expired() || CHECK_PROMT_WSP_FAILED(spFrontend, wspFront))
 			return;
 
-		if (nError)
-		{
-			//spFrontend->toldShutdown();
+		if (nError) {
+			spFrontend->stop();
 			return;
 		}
 		if (!uBufLen)
@@ -145,29 +150,41 @@ void forwarder::onListen(\
 		auto spPacket = std::make_shared<PACKET>(std::forward<boost::shared_array<char>&&>(spszBuff), uBufLen);
 		spFrontend->addToSendChains(spPacket);
 
-	}, [this, id](const int& nErrorCode, const char* pszErrInfo){
+	}, [this, id, wspFront](const int& nErrorCode, const char* pszErrInfo){
 		if(0 == nErrorCode){
-			//TODO:未处理
+
+			fprintf(stdout, "Back-end has connected to downward server\r\n");
+			//开启 incommer 通道
+			std::shared_ptr<Frontend> spFrontend;
+			if (wspFront.expired() || CHECK_PROMT_WSP_FAILED(spFrontend, wspFront))
+				return;
+			fprintf(stdout, "Front-end begin recv\r\n");
+			spFrontend->doRecv();
 			return;
 		}
+
+		fprintf(stdout, "Back-end has disconnected\r\n");
+
 		//Backend断开删除这个relay
 		std::unique_lock<std::mutex> lck(m_mtxRelays);
 		auto itF = m_mapRelays.find(id);
 		if(itF == m_mapRelays.end())
 			return;
+		auto spRelay = itF->second;
 		m_mapRelays.erase(itF);
+		lck.unlock();
+
+		//Front-end 断开连接
+		spRelay->getFrontend()->stop();
 	});
 
-	auto spRelay = std::make_shared<relay>(spFrontend, spBackend);
-	if (0 != spRelay->start()) {
-
-		return;
-	}
-
 	std::unique_lock<std::mutex> lck(m_mtxRelays);
-	m_mapRelays[id] = spRelay;
+	m_mapRelays[id] = std::move(std::make_shared<relay>(spFrontend, spBackend));
 	lck.unlock();
 
+	IO_EXCUTOR.pick_io_service()->post([spBackend]() {
+		spBackend->connRemote();
+	});
 
 	//continue listen
 	beginListen();

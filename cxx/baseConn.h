@@ -8,10 +8,10 @@ public:
 	using fntOnNetPacket = std::function<void(boost::shared_array<char>&&, \
 		unsigned int, const int&, const char*)>;
 
-	//连接状态变化事件
 	using fntOnConnStatus = std::function<void(const int&, const char*)>;
 
 	baseConn();
+
 	virtual ~baseConn();
 
 	int addToSendChains(const std::shared_ptr<PACKET>& spPacket);
@@ -19,6 +19,8 @@ public:
 	void doRecv();
 
 	virtual void stop() = 0;
+
+	void setRole(const char* pszRole) { m_szRole = pszRole; };
 
 private:
 	void triggerSend(const std::shared_ptr<PACKET>& spPacket);
@@ -30,11 +32,14 @@ private:
 		boost::shared_array<char>spszBuff
 	);
 
+	const char* m_szRole;
 protected:
 	using socket = boost::asio::ip::tcp::socket;
 
 	std::atomic<_enConnStatus> m_auStaus;
 	std::shared_ptr<socket> m_spSocket;
+
+	std::shared_ptr<boost::asio::io_service> m_spIO;
 	std::shared_ptr<boost::asio::io_service::strand> m_spStrand;
 	//发送队列
 	std::queue<std::shared_ptr<PACKET>> m_Queue;

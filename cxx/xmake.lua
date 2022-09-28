@@ -19,8 +19,8 @@ add_requires("vcpkg::boost-asio" , {configs = {shared = true, vs_runtime = "MT"}
 target("forwarder")
     set_kind("binary")
     set_symbols("debug")
-    add_includedirs("Utils/")
-    add_headerfiles("*.h")
+    add_includedirs("Utils")
+    add_headerfiles("*.h", "Utils/utils/*.h*")
     add_files("*.cpp")
 
     add_packages("asio")

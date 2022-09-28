@@ -11,12 +11,6 @@ public:
 	~Frontend();
 
 	void stop() override;
-protected:
-	void onRecv(boost::shared_array<char>spszBuff,\
-		unsigned int uRecvSize, \
-		const boost::system::error_code& ec
-	);
 private:
-	std::atomic<bool> m_abWorking;
 };
 

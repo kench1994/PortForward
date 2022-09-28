@@ -13,16 +13,12 @@ public:
 	explicit relay(std::shared_ptr<baseConn> spFrontend, std::shared_ptr<baseConn> spBackend);
 	~relay();
 
-	int start();
+	std::shared_ptr<baseConn> getBackend() { return m_spBackend; }
 
-	void stop();
-
+	std::shared_ptr<baseConn> getFrontend() { return m_spFrontend; }
 protected:
 
 private:
-	std::atomic<bool> m_abIsWorking;
-
-
 	//下游服务器
 	std::shared_ptr<baseConn> m_spBackend;
 	

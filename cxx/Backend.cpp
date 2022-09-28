@@ -5,15 +5,14 @@
 
 
 Backend::Backend()
-	: m_auStaus(_enConnStatus::unconn)
 {
 }
 
 Backend::~Backend()
 {
-	while (m_Queue.size()){
-		std::this_thread::sleep_for(std::chrono::milliseconds(20));
-	}
+	//while (m_Queue.size()){
+	//	std::this_thread::sleep_for(std::chrono::milliseconds(20));
+	//}
 }
 
 
@@ -29,7 +28,8 @@ int Backend::initial(const std::shared_ptr<NodeInfo>& spNodeInfo, \
 
 void Backend::stop()
 {
-
+	if (m_spSocket->is_open())
+		m_spSocket->close();
 }
 
 int Backend::connRemote()
@@ -37,14 +37,9 @@ int Backend::connRemote()
 	//不重复连接
 	if (_enConnStatus::connected == m_auStaus.load())
 		return 0;
-	//顺序执行器
-	auto *pBlader = IO_EXCUTOR.pick_blader();
-	//TODO:???
-	if(!m_spStrand)
-		m_spStrand = pBlader->spStrand;
 
 	//域名解析
-	boost::asio::ip::tcp::resolver resolver(*pBlader->spIO);
+	boost::asio::ip::tcp::resolver resolver(*m_spIO);
 	boost::asio::ip::tcp::resolver::query query(\
 		m_spNodeInfo->strHost.c_str(), m_spNodeInfo->strPort.c_str()
 	);
@@ -58,7 +53,7 @@ int Backend::connRemote()
 		return -1;
 	}
 
-	auto spSocket = std::make_shared<socket>(resolver.get_executor());
+	auto spSocket = std::make_shared<socket>(*m_spIO);
 	boost::asio::async_connect(*spSocket, resolver_result,
 		std::bind(&Backend::onConned, this, spSocket, std::placeholders::_1)
 	);

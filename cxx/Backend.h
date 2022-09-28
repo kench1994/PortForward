@@ -25,14 +25,10 @@ public:
 	int connRemote();
 
 protected:
-	using socket = boost::asio::ip::tcp::socket;
-
 
 	void onConned(std::shared_ptr<socket>spSocket, const boost::system::error_code ec);
 
 private:
-	std::atomic<_enConnStatus> m_auStaus;
-
 	std::shared_ptr<NodeInfo> m_spNodeInfo;
 };
 
