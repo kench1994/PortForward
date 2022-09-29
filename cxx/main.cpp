@@ -9,7 +9,7 @@ int main()
 	
 	utils::io_service_pool::instance().run();
 
-	auto spForwarder = std::make_shared<forwarder>(80, "www.baidu.com", "80");
+	auto spForwarder = std::make_shared<forwarder>(80, "192.168.5.246", "80");
 	
 	spForwarder->start();
 

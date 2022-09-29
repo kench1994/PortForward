@@ -29,7 +29,7 @@ int baseConn::addToSendChains(const std::shared_ptr<PACKET>& spPacket)
 	
 	//适应 strand 队列避免锁竞争
 	m_spStrand->post([this, spPacket](){
-		m_Queue.push(std::move(spPacket));
+		m_Queue.push(spPacket);
 
 		//触发发送
 		if (1 == m_Queue.size())
@@ -51,7 +51,7 @@ void baseConn::onSend(const boost::system::error_code& ec)
 {
 	if (ec) {
 		//写失败剩下的也不写了
-		m_spStrand->dispatch([this, ec]() {
+		//m_spIO->dispatch([this, ec]() {
 			m_spSocket->shutdown(boost::asio::socket_base::shutdown_send);
 			std::queue<std::shared_ptr<PACKET>> empty;
 			m_Queue.swap(empty);
@@ -66,7 +66,7 @@ void baseConn::onSend(const boost::system::error_code& ec)
 			//但是我认为前面通知到外部了，这边close如果触发其他异常不会影响到通知事件重复
 			m_spSocket->close();
 
-		});
+		//});
 		return;
 	}
 
@@ -96,11 +96,12 @@ void baseConn::doRecv()
 	//m_abWorking = true;
 
 	m_spSocket->async_read_some(boost::asio::buffer(spszBuffer.get(), uBufferSize),
-		boost::asio::bind_executor(*m_spStrand, std::bind(&baseConn::onRecv, this,
+		//boost::asio::bind_executor(*m_spStrand, 
+		std::bind(&baseConn::onRecv, this,
 			std::placeholders::_1,
 			std::placeholders::_2,
 			spszBuffer
-		))
+		)//)
 	);
 }
 
