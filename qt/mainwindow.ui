@@ -64,6 +64,12 @@
     <string notr="true"/>
    </property>
    <layout class="QGridLayout" name="gridLayout">
+    <property name="bottomMargin">
+     <number>20</number>
+    </property>
+    <property name="verticalSpacing">
+     <number>20</number>
+    </property>
     <item row="0" column="0">
      <widget class="QTableWidget" name="tableWidget">
       <property name="enabled">
@@ -84,10 +90,11 @@
       <property name="styleSheet">
        <string notr="true">QTableWidget{ color:black;
 	background-color:rgb(128,128,128);
-	selection-color:rgb(0, 0, 0);
-	selection-background-color:rgb(	100,149,237);
+	selection-color:rgb(255,255,255);
+	color: rgb(0, 0, 0);
+	selection-background-color: rgb(155, 89, 182);
 	border:0px;
-	font: 8pt 'Microsoft YaHei';
+	font:12pt 'Microsoft YaHei';
 }
 QHeaderView::section:horizontal{
 	border: 0px solid rgb(255, 255, 255);
@@ -376,7 +383,7 @@ QPushButton:pressed {
         <property name="styleSheet">
          <string notr="true">QPushButton {
 	font: 700;
-	font-size:35px;
+	font-size:25px;
 	color:white;
 	border-radius:25px;
     border-width:3px;
@@ -404,7 +411,7 @@ QPushButton:pressed {
 }</string>
         </property>
         <property name="text">
-         <string>X</string>
+         <string>||</string>
         </property>
        </widget>
       </item>

@@ -1,25 +1,27 @@
-#include "forwarder.h"
+#include "Forwarder.h"
 #include "utils/io_service_pool.hpp"
 #include <QDebug>
 
-forwarder::forwarder(const unsigned int uPort, const char* pszHost, const char* pszPort)
+Forwarder::Forwarder(const unsigned int uPort, const char* pszHost, const char* pszPort)
 	: m_abOnListen(false)
 	, m_uPort(uPort)
 	, m_fnNotifyConnCnt(NULL)
 	, m_spIdGen(std::make_unique<utils::LckFreeIncId<unsigned int>>(0))
+	, m_spAcceptor(nullptr)
 	, m_spNodeInfo(\
 		std::make_shared<Backend::NodeInfo>(\
 		pszHost, pszPort, 0)
 	 )
 {
+	qDebug() << pszHost << ":" << pszPort;
 }
 
 
-forwarder::~forwarder()
+Forwarder::~Forwarder()
 {
 }
 
-int forwarder::start()
+int Forwarder::start()
 {
 	//不重复开启端口监听
 	if (m_spAcceptor || m_abOnListen.load(std::memory_order::memory_order_relaxed))
@@ -42,14 +44,15 @@ int forwarder::start()
 }
 
 
-void forwarder::stop()
+void Forwarder::stop()
 {
-	m_spAcceptor->close();
+	if(m_spAcceptor)
+		m_spAcceptor->close();
 	m_abOnListen.store(false, std::memory_order::memory_order_relaxed);
 }
 
 
-int forwarder::beginListen()
+int Forwarder::beginListen()
 {
 	try {
 		if (!m_spAcceptor || !m_spAcceptor->is_open())
@@ -59,7 +62,7 @@ int forwarder::beginListen()
 
 		auto spSocket = std::make_shared<boost::asio::ip::tcp::socket>(m_spAcceptor->get_executor());
 		m_spAcceptor->async_accept(*spSocket, \
-			std::bind(&forwarder::onListen, this, spSocket, \
+			std::bind(&Forwarder::onListen, this, spSocket, \
 				std::placeholders::_1)
 		);
 	} catch (const std::exception&) {
@@ -70,7 +73,7 @@ int forwarder::beginListen()
 	return true;
 }
 
-void forwarder::onListen(\
+void Forwarder::onListen(\
 	std::shared_ptr<boost::asio::ip::tcp::socket> spSocket,
 	const boost::system::error_code& ec
 )
@@ -87,8 +90,9 @@ void forwarder::onListen(\
 	spFrontend->setRole("Front-end");
 	auto spBackend = std::make_shared<Backend>();
 	spBackend->setRole("Back-end");
-
+	std::weak_ptr<Frontend> wspFront(spFrontend);
 	std::weak_ptr<Backend> wspBack(spBackend);
+
 	spFrontend->initial(std::move(spSocket), [wspBack, this](boost::shared_array<char>&& spszBuff, unsigned int uBufLen, const int& nError, const char* pszErrInfo) {
 
 		qDebug() << "Front-end flow in " << uBufLen; 
@@ -98,7 +102,6 @@ void forwarder::onListen(\
 			return;
 
 		if (nError) {
-			//TODO:通知前端
 			spBackend->stop();
 			return;
 		}
@@ -115,15 +118,11 @@ void forwarder::onListen(\
 
 		qDebug() << "Front-end has disconnected";
 
-		std::unique_lock<std::mutex> lck(m_mtxRelays);
-		auto itF = m_mapRelays.find(id);
-		if (itF == m_mapRelays.end())
-			return;
-		auto spRelay = itF->second;
-		m_mapRelays.erase(itF);
-		lck.unlock();
+		auto spRelay = delRelay(id);
 
-		spRelay->getBackend()->stop();
+		if (spRelay) {
+			spRelay->getBackend()->stop();
+		}
 	});
 
 	//TODO:frontend 断开 通知backend 断开
@@ -131,7 +130,6 @@ void forwarder::onListen(\
 	//前端可以统计forwarder持有的relay（连接数等信息
 
 	//TODO：通知前端
-	std::weak_ptr<Frontend> wspFront(spFrontend);
 	spBackend->initial(m_spNodeInfo, [wspFront](boost::shared_array<char>&& spszBuff, unsigned int uBufLen, const int& nError, const char* pszErrInfo) {
 
 		qDebug() << "Back-end flow in " << uBufLen;
@@ -152,10 +150,7 @@ void forwarder::onListen(\
 		auto spPacket = std::make_shared<PACKET>(std::forward<boost::shared_array<char>&&>(spszBuff), uBufLen);
 		spFrontend->addToSendChains(spPacket);
 
-	}, [this, id, wspFront, wspBack](const int& nErrorCode, const char* pszErrInfo){
-		std::shared_ptr<Backend> spBackend;
-		if (wspBack.expired() || CHECK_PROMT_WSP_FAILED(spBackend, wspBack))
-			return;
+	}, [this, id, wspFront](const int& nErrorCode, const char* pszErrInfo){
 
 		if(0 == nErrorCode){
 
@@ -169,34 +164,31 @@ void forwarder::onListen(\
 			qDebug() << "Front-end begin recv";
 			
 			spFrontend->doRecv();
+			
+			//统计的是后端连接数
+			if (m_fnNotifyConnCnt) {
+				std::unique_lock<std::mutex> lck(m_mtxRelays);
+				auto uConnCnt = m_mapRelays.size();
+				lck.unlock();
 
-			auto uConnCnt = spBackend->m_auConnCnt.fetch_add(1);
-			if(m_fnNotifyConnCnt)
 				m_fnNotifyConnCnt(m_uPort, uConnCnt);
+			}
 			return;
 		}
 
 		qDebug() << "Back-end has disconnected";
 
 		//Backend断开删除这个relay
-		std::unique_lock<std::mutex> lck(m_mtxRelays);
-		auto itF = m_mapRelays.find(id);
-		if(itF == m_mapRelays.end())
-			return;
-		auto spRelay = itF->second;
-		m_mapRelays.erase(itF);
-		lck.unlock();
+		auto spRelay = delRelay(id);
 
-		//Front-end 断开连接
-		spRelay->getFrontend()->stop();
-
-		auto uConnCnt = spBackend->m_auConnCnt.fetch_sub(1);
-		if(m_fnNotifyConnCnt)
-			m_fnNotifyConnCnt(m_uPort, uConnCnt);
+		if (spRelay) {
+			//Front-end 断开连接
+			spRelay->getFrontend()->stop();
+		}		
 	});
 
 	std::unique_lock<std::mutex> lck(m_mtxRelays);
-	m_mapRelays[id] = std::move(std::make_shared<relay>(spFrontend, spBackend));
+	m_mapRelays[id] = std::move(std::make_shared<Relay>(spFrontend, spBackend));
 	lck.unlock();
 
 	IO_EXCUTOR.pick_io_service()->post([spBackend]() {
@@ -207,12 +199,29 @@ void forwarder::onListen(\
 	beginListen();
 }
 
-unsigned int forwarder::getPort() const
+unsigned int Forwarder::getPort() const
 {
 	return m_uPort;
 }
 
-void forwarder::setNotifyConnCnt(const fntNotifyForwardConnCnt &fnNotify)
+std::shared_ptr<Relay> Forwarder::delRelay(const unsigned int id)
+{
+	std::unique_lock<std::mutex> lck(m_mtxRelays);
+	auto itF = m_mapRelays.find(id);
+	if (itF == m_mapRelays.end())
+		return nullptr;
+	auto spRelay = itF->second;
+	m_mapRelays.erase(itF);
+	auto uConnCnt = m_mapRelays.size();
+	lck.unlock();
+
+	//trick析构的时候重新通知连接数,因为tcp函数不一定通知到
+	if (m_fnNotifyConnCnt)
+		m_fnNotifyConnCnt(m_uPort, uConnCnt);
+	return spRelay;
+}
+
+void Forwarder::setNotifyConnCnt(const fntNotifyForwardConnCnt &fnNotify)
 {
 	m_fnNotifyConnCnt = fnNotify;
 }

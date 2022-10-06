@@ -1,10 +1,10 @@
-#include "baseConn.h"
+#include "BaseConn.h"
 #include "utils/io_service_pool.hpp"
 #include <QDebug>
 
-baseConn::baseConn()
+BaseConn::BaseConn()
 	: m_spSocket(nullptr)
-	, m_auConnCnt(0)
+	, m_uShutdownState(0)
 	, m_auStaus(_enConnStatus::unconn)
 	, m_fnOnConnStatus(NULL)
 	, m_fnOnPacket(NULL)
@@ -15,29 +15,69 @@ baseConn::baseConn()
 }
 
 
-baseConn::~baseConn()
+BaseConn::~BaseConn()
 {
+	//如果还未关闭发送通道等待发送完毕
+	while (!(m_uShutdownState & 0x10) && m_Queue.size()) 
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	
+	//等待接收通道关闭
+	while (!(m_uShutdownState & 0x01))
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
+	if (m_fnOnConnStatus) {
+		m_fnOnConnStatus(-1, "deconstruct");
+		m_fnOnConnStatus = NULL;
+	}
+	m_fnOnPacket = NULL;
+
+	qDebug() << m_strRole.data() << " (parent) deconstruct";
 }
 
-void baseConn::setRole(const char* pszRole)
+void BaseConn::setRole(const char* pszRole)
 { 
 	if(!pszRole)
 		return;
 	m_strRole = pszRole; 
 };
 
-int baseConn::addToSendChains(const std::shared_ptr<PACKET>& spPacket)
+void BaseConn::shutdown(const unsigned int u)
+{
+	switch (u)
+	{
+	case 0x01:
+		if (0x01 != (m_uShutdownState & 0x01) && m_spSocket)
+			m_spSocket->shutdown_receive;
+			break;
+	case 0x10:
+		if (0x10 != (m_uShutdownState & 0x10) && m_spSocket)
+			m_spSocket->shutdown_send;
+		break;
+	default:
+		break;
+	}
+	m_uShutdownState |= u;
+}
+
+int BaseConn::addToSendChains(const std::shared_ptr<PACKET>& spPacket)
 {
 	//目前连接上的状态是由外部管理的
 	//frontend 直接等待 socket 转移所有者
 	//backend 连接到 下游服务器后设置
-	if (_enConnStatus::connected != m_auStaus.load())
-		return -1;
 	
 	//适应 strand 队列避免锁竞争
 	m_spStrand->post([this, spPacket](){
+		//已关闭发送
+		if (0x10 == (m_uShutdownState & 0x10)) {
+			std::queue<std::shared_ptr<PACKET>> empty;
+			m_Queue.swap(empty);
+			return;
+		}
 		m_Queue.push(spPacket);
+		
+		//未连接上后端不触发实际发送
+		if (_enConnStatus::connected != m_auStaus.load())
+			return;
 
 		//触发发送
 		if (1 == m_Queue.size())
@@ -48,18 +88,28 @@ int baseConn::addToSendChains(const std::shared_ptr<PACKET>& spPacket)
 }
 
 
-void baseConn::triggerSend(const std::shared_ptr<PACKET>& spPacket)
+void BaseConn::triggerSend(const std::shared_ptr<PACKET>& spPacket)
 {
+	//传递进来假包,用于触发发送
+	if (!spPacket) {
+		auto spNextSend = m_Queue.front();
+		triggerSend(spNextSend);
+		return;
+	}
 	m_spSocket->async_send(boost::asio::buffer(spPacket->spszBuff.get(), spPacket->uRealLen),
-		std::bind(&baseConn::onSend, this, std::placeholders::_1)
+		std::bind(&BaseConn::onSend, this, std::placeholders::_1, spPacket)
 	);
 }
 
-void baseConn::onSend(const boost::system::error_code& ec)
+void BaseConn::onSend(const boost::system::error_code& ec, const std::shared_ptr<PACKET>& spPacket)
 {
 	if (ec) {
-		//写失败剩下的也不写了
+		qDebug() << m_strRole.data() << " onSend ec " << ec.message().data();
+
+
 		//m_spIO->dispatch([this, ec]() {
+			//发送失败不再发送
+			m_uShutdownState |= 0x10;
 			m_spSocket->shutdown(boost::asio::socket_base::shutdown_send);
 			std::queue<std::shared_ptr<PACKET>> empty;
 			m_Queue.swap(empty);
@@ -70,15 +120,21 @@ void baseConn::onSend(const boost::system::error_code& ec)
 				m_fnOnConnStatus = NULL;
 			}
 			
-			//其实不知道怎么处理比较好
-			//但是我认为前面通知到外部了，这边close如果触发其他异常不会影响到通知事件重复
-			m_spSocket->close();
+			////其实不知道怎么处理比较好
+			////但是我认为前面通知到外部了，这边close如果触发其他异常不会影响到通知事件重复
+			//m_spSocket->close();
 
 		//});
 		return;
 	}
 
 	m_spStrand->post([this]() {
+
+		if (0x10 == (m_uShutdownState & 0x10)) {
+			std::queue<std::shared_ptr<PACKET>> empty;
+			m_Queue.swap(empty);
+			return;
+		}
 
 		if (!m_Queue.empty()) {
 			auto spSended = m_Queue.front();
@@ -95,17 +151,19 @@ void baseConn::onSend(const boost::system::error_code& ec)
 }
 
 
-void baseConn::doRecv()
+void BaseConn::doRecv()
 {
+	qDebug() << m_strRole.data() << " doRecv";
+
+
 	constexpr unsigned int uBufferSize = 4096;
 	boost::shared_array<char>spszBuffer(new char[uBufferSize]);
 	memset(spszBuffer.get(), 0, uBufferSize);
 
 	//m_abWorking = true;
-
 	m_spSocket->async_read_some(boost::asio::buffer(spszBuffer.get(), uBufferSize),
 		//boost::asio::bind_executor(*m_spStrand, 
-		std::bind(&baseConn::onRecv, this,
+		std::bind(&BaseConn::onRecv, this,
 			std::placeholders::_1,
 			std::placeholders::_2,
 			spszBuffer
@@ -113,7 +171,7 @@ void baseConn::doRecv()
 	);
 }
 
-void baseConn::onRecv(\
+void BaseConn::onRecv(\
 	const boost::system::error_code& ec,
 	size_t  uRecvSize,
 	boost::shared_array<char>spszBuff
@@ -127,16 +185,19 @@ void baseConn::onRecv(\
 	}
 
 	if (ec) {
-		//如何处理好半连接 is a question
-		m_spSocket->shutdown(boost::asio::socket_base::shutdown_receive);
+		qDebug() << m_strRole.data() << " onRecv ec " << ec.message().data();
 
+		//如何处理好半连接 is a question
+		if (!(m_uShutdownState & 0x01)) {
+			m_spSocket->shutdown(boost::asio::socket_base::shutdown_receive);
+			m_uShutdownState |= 0x01;
+		}
 		//还需要通知到外部
 		if (m_fnOnConnStatus) {
 			m_fnOnConnStatus(ec.value(), ec.message().data());
 			m_fnOnConnStatus = NULL;
 		}
 
-		m_spSocket->close();
 		return;
 	}
 

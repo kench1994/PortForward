@@ -1,8 +1,8 @@
 #pragma once
-#include "baseConn.h"
+#include "BaseConn.h"
 
 
-class Backend : virtual public baseConn
+class Backend : virtual public BaseConn
 {
 public:
 	//节点信息

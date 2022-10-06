@@ -2,7 +2,8 @@
 #include <boost/asio.hpp>
 #include <queue>
 #include "conf.h"
-class baseConn
+class BaseConn
+	: public std::enable_shared_from_this<BaseConn>
 {
 public:
 	using fntOnNetPacket = std::function<void(boost::shared_array<char>&&, \
@@ -10,13 +11,13 @@ public:
 
 	using fntOnConnStatus = std::function<void(const int&, const char*)>;
 
-	//连接数统计
-	std::atomic<unsigned int> m_auConnCnt;
-		//连接状态变化
+	//连接状态变化
 	fntOnConnStatus m_fnOnConnStatus;
-	baseConn();
 
-	virtual ~baseConn();
+
+	BaseConn();
+
+	virtual ~BaseConn();
 
 	int addToSendChains(const std::shared_ptr<PACKET>& spPacket);
 
@@ -26,10 +27,10 @@ public:
 
 	void setRole(const char* pszRole);
 
+	void shutdown(const unsigned int u);
 private:
-	void triggerSend(const std::shared_ptr<PACKET>& spPacket);
 
-	void onSend(const boost::system::error_code& ec);
+	void onSend(const boost::system::error_code& ec, const std::shared_ptr<PACKET>& spPacket);
 
 	void onRecv(const boost::system::error_code& ec,
 		size_t  uRecvSize,
@@ -38,6 +39,9 @@ private:
 
 	std::string m_strRole;
 protected:
+	//0位接收,1位发送,置1表示关闭
+	unsigned int m_uShutdownState;
+
 	using socket = boost::asio::ip::tcp::socket;
 
 	std::atomic<_enConnStatus> m_auStaus;
@@ -49,5 +53,7 @@ protected:
 	std::queue<std::shared_ptr<PACKET>> m_Queue;
 	//数据路由
 	fntOnNetPacket m_fnOnPacket;
+
+	void triggerSend(const std::shared_ptr<PACKET>& spPacket);
 };
 

@@ -1,6 +1,6 @@
 #pragma once
-#include "baseConn.h"
-class Frontend : virtual public baseConn
+#include "BaseConn.h"
+class Frontend : virtual public BaseConn
 {
 public:
 	Frontend();

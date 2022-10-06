@@ -1,5 +1,5 @@
 #pragma once
-#include "relay.h"
+#include "Relay.h"
 #include "LckFreeIncId.h"
 #include <boost/utility/string_view.hpp>
 #include <boost/asio.hpp>
@@ -8,7 +8,7 @@
 #include <atomic>
 #include <mutex>
 
-class forwarder
+class Forwarder
 {
 public:
 	using socket = boost::asio::ip::tcp::socket;
@@ -20,17 +20,19 @@ public:
 	**/
 	using fntNotifyForwardConnCnt = std::function<void(unsigned int, unsigned int)>;
 
-	forwarder() = delete;
+	Forwarder() = delete;
 
-	explicit forwarder(const unsigned int uPort, const char* pszHost, const char* pszPort);
+	explicit Forwarder(const unsigned int uPort, const char* pszHost, const char* pszPort);
 
-	~forwarder();
+	~Forwarder();
 
 	int start();
 
 	void stop();
 
 	unsigned int getPort() const;
+
+	std::shared_ptr<Relay> delRelay(const unsigned int id);
 
 	void setNotifyConnCnt(const fntNotifyForwardConnCnt &fnNotify);
 protected:
@@ -44,7 +46,7 @@ protected:
 private:
 	fntNotifyForwardConnCnt m_fnNotifyConnCnt;
 
-	std::shared_ptr<forwarder> m_spForwarder;
+	std::shared_ptr<Forwarder> m_spForwarder;
 
 	std::unique_ptr<utils::LckFreeIncId<unsigned int>> m_spIdGen;
 
@@ -53,7 +55,7 @@ private:
 	std::shared_ptr<boost::asio::ip::tcp::acceptor>m_spAcceptor;
 
 	std::mutex m_mtxRelays;
-	std::unordered_map<unsigned int, std::shared_ptr<relay>> m_mapRelays;
+	std::unordered_map<unsigned int, std::shared_ptr<Relay>> m_mapRelays;
 
 	//下游服务器信息
 	std::shared_ptr<Backend::NodeInfo> m_spNodeInfo;

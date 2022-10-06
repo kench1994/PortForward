@@ -1,15 +1,16 @@
-#include "relay.h"
+#include "Relay.h"
 #include <boost/bind.hpp>
 #include <functional>
-#include <iostream>
+#include <QDebug>
 
 
-relay::relay(std::shared_ptr<baseConn> spFrontend, std::shared_ptr<baseConn> spBackend)
+Relay::Relay(std::shared_ptr<BaseConn> spFrontend, std::shared_ptr<BaseConn> spBackend)
 	: m_spBackend(std::move(spBackend)), m_spFrontend(std::move(spFrontend))
 {
 
 }
 
-relay::~relay()
+Relay::~Relay()
 {
+	qDebug() << "relay deconstruct";
 }

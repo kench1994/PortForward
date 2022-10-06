@@ -2,7 +2,8 @@
 #include <boost/bind.hpp>
 #include <boost/function.hpp>
 #include "utils/io_service_pool.hpp"
-
+#include "utils/cost_timer.hpp"
+#include <QDebug>
 
 Backend::Backend()
 {
@@ -10,6 +11,13 @@ Backend::Backend()
 
 Backend::~Backend()
 {
+	qDebug() << "Backend deconstruct";
+
+	if (m_fnOnConnStatus) {
+		m_fnOnConnStatus(-1, "deconstruct");
+		m_fnOnConnStatus = NULL;
+	}
+	m_fnOnPacket = NULL;
 	//while (m_Queue.size()){
 	//	std::this_thread::sleep_for(std::chrono::milliseconds(20));
 	//}
@@ -21,6 +29,7 @@ int Backend::initial(const std::shared_ptr<NodeInfo>& spNodeInfo, \
 {
 	m_spNodeInfo = spNodeInfo;
 	m_fnOnPacket = fnOnPacket;
+
 	m_fnOnConnStatus = fnOnConnStatus;
 	return 0;
 }
@@ -28,17 +37,23 @@ int Backend::initial(const std::shared_ptr<NodeInfo>& spNodeInfo, \
 
 void Backend::stop()
 {
-	if (m_spSocket->is_open())
-		m_spSocket->close();
+	if (!(m_uShutdownState & 0x01)) {
+		m_spSocket->shutdown(boost::asio::socket_base::shutdown_receive);
+		m_uShutdownState |= 0x01;
+	}
+	if (!(m_uShutdownState & 0x01)) {
+		m_spSocket->shutdown(boost::asio::socket_base::shutdown_send);
+		m_uShutdownState |= 0x10;
+	}
 }
 
 int Backend::connRemote()
 {
-	//²»ÖØ¸´Á¬½Ó
+	//ä¸é‡å¤è¿æ¥
 	if (_enConnStatus::connected == m_auStaus.load())
 		return 0;
 
-	//ÓòÃû½âÎö
+	//åŸŸåè§£æ
 	boost::asio::ip::tcp::resolver resolver(*m_spIO);
 	boost::asio::ip::tcp::resolver::query query(\
 		m_spNodeInfo->strHost.c_str(), m_spNodeInfo->strPort.c_str()
@@ -47,17 +62,21 @@ int Backend::connRemote()
 	boost::system::error_code ec;
 	auto resolver_result = resolver.resolve(query, ec);
 	if (ec) {
-		//TODO:Í¨ÖªÊ§°Ü
-		if(m_fnOnConnStatus)
+		//TODO:é€šçŸ¥å¤±è´¥
+		if (m_fnOnConnStatus) {
 			m_fnOnConnStatus(ec.value(), ec.message().c_str());
+			m_fnOnConnStatus = NULL;
+		}
 		return -1;
 	}
 
 	auto spSocket = std::make_shared<socket>(*m_spIO);
 	boost::asio::async_connect(*spSocket, resolver_result,
-		std::bind(&Backend::onConned, this, spSocket, std::placeholders::_1)
+		boost::asio::bind_executor(*m_spStrand, 
+			std::bind(&Backend::onConned, this, spSocket, std::placeholders::_1)
+		)
 	);
-	//Òì²½ conn ÈÎÎñÌá½»³É¹¦
+	//å¼‚æ­¥ conn ä»»åŠ¡æäº¤æˆåŠŸ
 	return 0;
 }
 
@@ -74,5 +93,9 @@ void Backend::onConned(std::shared_ptr<socket>spSocket, const boost::system::err
 	m_auStaus.store(_enConnStatus::connected);
 	m_spSocket = std::move(spSocket);
 
+	if (m_Queue.size()) {
+		triggerSend(nullptr);
+	}
+	
 	doRecv();
 }

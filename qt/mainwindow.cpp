@@ -4,8 +4,11 @@
 #include <QMessageBox>
 #include <QToolTip>
 #include <QDebug>
+#include <fstream>
+#include <nlohmann/json.hpp>
+#include <boost/algorithm/string.hpp>
 #include "utils/io_service_pool.hpp"
-
+#include "GuiThreadRun.hpp"
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_bAddItem(false)
@@ -19,15 +22,14 @@ MainWindow::MainWindow(QWidget *parent)
     ui->tableWidget->setHorizontalHeaderLabels({u8"监听端口", u8"下游服务器", u8"连接数", u8"实时流量", u8"状态"});
     //隐藏纵向表头
     ui->tableWidget->verticalHeader()->setHidden(true);
-    //设置选择行为，以行为单位
-    //ui->tableWidget->setSelectionBehavior(QAbstractItemView::SelectRows);
-    //设置选择模式，选择单行
+    //选择行为单位
+    ui->tableWidget->setSelectionBehavior(QAbstractItemView::SelectRows);
+    //选择单行
     ui->tableWidget->setSelectionMode(QAbstractItemView::SingleSelection);
-    //设置表格字体
-    ui->tableWidget->setFont(QFont("Microsoft YaHei", 16)); 
+        
+	loadConfig();
 
-    
-    ui_init();
+	updateBtns();
 
     //启动线程池
 	utils::io_service_pool::instance().run();
@@ -35,10 +37,11 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+	//TODO:
     delete ui;
 }
 
-void MainWindow::ui_init()
+void MainWindow::updateBtns()
 {
     //读取配置文件
 
@@ -48,12 +51,12 @@ void MainWindow::ui_init()
         case 0:
             //添加可用，其他按钮不可用
             setBtnState(ui->pushButtonAdd, true);
-            for(auto& itBtn : {ui->pushButtonDel, ui->pushButtonOk, ui->pushButtonCancel})
+            for(auto& itBtn : {ui->pushButtonDel, ui->pushButtonOk, ui->pushButtonCancel, ui->pushButtonStart})
                 setBtnState(&*itBtn, false);
             break;
         default:
             //添加 删除可用，其他不可用
-            for(auto& itBtn : {ui->pushButtonDel, ui->pushButtonAdd} )
+            for(auto& itBtn : {ui->pushButtonDel, ui->pushButtonAdd, ui->pushButtonStart} )
                 setBtnState(&*itBtn, true);
             for(auto& itBtn : { ui->pushButtonOk, ui->pushButtonCancel})
                 setBtnState(&*itBtn, false);
@@ -67,6 +70,9 @@ void MainWindow::setBtnState(QPushButton* pBtn, bool bEnable)
         return;
     pBtn->setEnabled(bEnable);
     if(bEnable){
+		if (pBtn == ui->pushButtonStart) {
+			return;
+		}
         pBtn->setStyleSheet("QPushButton {"
            "	font: 700;"
            "	font-size:35px;"
@@ -97,6 +103,9 @@ void MainWindow::setBtnState(QPushButton* pBtn, bool bEnable)
            "}"
         );
     }else{
+		if (pBtn == ui->pushButtonStart) {
+			return;
+		}
         pBtn->setStyleSheet("QPushButton {"
            "	font: 700;"
            "	font-size:35px;"
@@ -129,74 +138,253 @@ void MainWindow::setBtnState(QPushButton* pBtn, bool bEnable)
     }
 }
 
+void MainWindow::saveConfig()
+{
+	//读取当前表格中的状态
+	if (m_bAddItem)
+		return;
+
+	nlohmann::json jsonArray;
+	int nRowCnt = ui->tableWidget->rowCount();
+	for (int nRowIdx = 0; nRowIdx < nRowCnt; nRowIdx++) {
+		nlohmann::json singleJsonObj;
+		//读取监听端口,下游服务器,状态
+		{
+			auto qstrPort = getItemText(nRowIdx, 0);
+			if (qstrPort.isEmpty() || 0 == qstrPort.toUInt())
+				continue;
+			singleJsonObj["port"] = qstrPort.toUtf8();
+		}
+		{
+			auto qstrServ = getItemText(nRowIdx, 1);
+			if (qstrServ.isEmpty())
+				continue;
+			singleJsonObj["server"] = qstrServ.toUtf8();
+		}
+		{
+			//fnGetItemText(nRowIdx, 2);
+		}
+		jsonArray.emplace_back(std::move(singleJsonObj));
+	}
+
+	std::string strCtx = jsonArray.dump(4);
+
+	//写入到配置文件中
+	std::ofstream ofs("forward.json", std::ios::ate);
+	ofs.write(strCtx.data(), strCtx.length());
+	ofs.close();
+}
+
+void MainWindow::loadConfig()
+{
+	std::ifstream ifs("forward.json", std::ios::binary);
+	std::string strCtx((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+	ifs.close();
+
+	try {
+		auto jsonArray = nlohmann::json::parse(strCtx);
+		for (const auto& itJsonObj : jsonArray) {
+			try {
+				auto strPort = itJsonObj["port"].get<std::string>();
+				auto strServer = itJsonObj["server"].get<std::string>();
+				auto uPort = static_cast<unsigned int>(atoi(strPort.data()));
+				if (0 == uPort)
+					continue;
+
+				std::vector<std::string> vHostInfo;
+				boost::split(vHostInfo, strServer, boost::is_any_of(":"), boost::token_compress_on);
+				if (2 != vHostInfo.size())
+					continue;
+
+				addInitRow(strPort.data(), strServer.data(), "0", "未实现", "未启动", true);
+				addForwarder(uPort, vHostInfo[0].data(), vHostInfo[1].data());
+			} catch (...) {
+
+			}
+		}
+	} catch (...) {
+
+	}
+}
+
+QTableWidgetItem* MainWindow::addInitRow(const char* pszBindPort, const char* pszServer, \
+	const char* pszConnCnt, const char* pszSpeed, const char* pszStatus, bool bNoneEditable)
+{
+	int nRow = ui->tableWidget->rowCount();
+	//总行数增加1
+	ui->tableWidget->setRowCount(nRow + 1);
+	static QFont font("Microsoft YaHei UI", 10.5);
+
+	QTableWidgetItem *pFirstItem = nullptr;
+	for (auto nColIdx = 0; nColIdx < 5; nColIdx++) {
+
+		QTableWidgetItem* pItem = new QTableWidgetItem();
+		pItem->setFont(font);
+		pItem->setTextAlignment(Qt::AlignHCenter | Qt::AlignVCenter);
+
+		bool bEditable = false;
+		switch (nColIdx)
+		{
+		case 0:
+			bEditable = true;
+			if (pszBindPort)
+				pItem->setText(QString::fromUtf8(pszBindPort));
+			pFirstItem = pItem;
+			break;
+		case 1:
+			if (pszServer)
+				pItem->setText(QString::fromUtf8(pszServer));
+			bEditable = true;
+			break;
+		case 2:
+			if (pszConnCnt)
+				pItem->setText(QString::fromUtf8(pszConnCnt));
+			break;
+		case 3:
+			if (pszSpeed)
+				pItem->setText(QString::fromUtf8(pszSpeed));
+			break;
+		case 4:
+			if (pszStatus)
+				pItem->setText(QString::fromUtf8(pszStatus));
+			break;
+		}
+
+		ui->tableWidget->setItem(nRow, nColIdx, pItem);
+
+		//不可编辑
+		if (!bEditable || bNoneEditable) {
+			//| Qt::ItemIsEnabled | Qt::ItemIsSelectable
+			pItem->setFlags(pItem->flags() & (~Qt::ItemIsEditable));
+			continue;
+		}
+	}
+	//设置行高
+	ui->tableWidget->setRowHeight(nRow, 40);
+	ui->tableWidget->setColumnWidth(0, ui->tableWidget->columnWidth(0));
+	return pFirstItem;
+}
+
+std::shared_ptr<Forwarder> MainWindow::addForwarder(const unsigned int uBindPort, const char* pszServerIp, const char* pszServerPort)
+{
+	auto spForwarder = std::make_shared<Forwarder>(uBindPort, \
+		pszServerIp, pszServerPort);
+
+	std::unique_lock<std::mutex> lck(m_mtxForward);
+	auto itF = m_mapForwards.find(uBindPort);
+	if (itF != m_mapForwards.end()) {
+		QMessageBox::information(this, "information", "监听端口已存在");
+		return nullptr;
+	}
+
+	m_mapForwards[uBindPort] = spForwarder;
+	lck.unlock();
+
+	spForwarder->setNotifyConnCnt([this](unsigned int uListenPort, unsigned int uConnCnt) {
+		qDebug() << "listenPort:" << uListenPort << ",curr conn cnt:" << uConnCnt;
+		int nRowCnt = ui->tableWidget->rowCount();
+		if (0 > nRowCnt)
+			return;
+		//从表格中找到当前端口
+		QString qstrBindPort = QString::number(uListenPort);
+		for (auto i = 0; i < nRowCnt; i++) {
+			auto pItem = ui->tableWidget->item(i, 0);
+			if (!pItem)
+				continue;
+			//TODO:确认当前连接不是编辑中的连接
+			if (pItem->text() != qstrBindPort)
+				continue;
+			pItem = ui->tableWidget->item(i, 2);
+			if (!pItem)
+				continue;
+			//TODO:在主线程中更新UI
+			fprintf(stdout, "conn cnt:%d\r\n", uConnCnt);
+			QString qstrConnNum = QString::number(uConnCnt);
+
+			auto updateConnCntShow = [pItem, qstrConnNum]() {
+				pItem->setText(qstrConnNum);
+			};
+			GuiThreadRun::inst().excute(updateConnCntShow);
+			return;
+		}
+	});
+
+	return spForwarder;
+}
+
+QString MainWindow::getItemText(const int nRow, const int nCol)
+{
+	QString qstrResult;
+	auto pItem = ui->tableWidget->item(nRow, nCol);
+	if (!pItem)
+		return qstrResult;
+	return pItem->text();
+}
+
+QTableWidgetItem* MainWindow::getItem(const int nRow, const int nCol)
+{
+	auto pItem = ui->tableWidget->item(nRow, nCol);
+	return pItem;
+}
+
+std::shared_ptr<Forwarder> MainWindow::getForwarder(const unsigned int uBindPort)
+{
+	std::lock_guard<std::mutex> lck(m_mtxForward);
+	auto itF = m_mapForwards.find(uBindPort);
+	if (itF == m_mapForwards.end())
+		return nullptr;
+	auto spForwarder = itF->second;
+	return spForwarder;
+}
+
 void MainWindow::changeBtnState(QPushButton* pBtn)
 {
-        if(!pBtn)
-            return;
-        //禁用按钮
-        if(pBtn->isEnabled()){
-            setBtnState(pBtn, false);
-            return;
-        }
-        //启用按钮
-        setBtnState(pBtn, true);
+    if(!pBtn)
+        return;
+    //禁用按钮
+    if(pBtn->isEnabled()){
+        setBtnState(pBtn, false);
+        return;
     }
+    //启用按钮
+    setBtnState(pBtn, true);
+}
 
 void MainWindow::on_pushButtonAdd_clicked()
 {
     m_bAddItem = true;
+
     for(auto& itBtn : {ui->pushButtonAdd, ui->pushButtonDel})
         setBtnState(&*itBtn, false);
     for(auto& itBtn : {ui->pushButtonOk, ui->pushButtonCancel})
         setBtnState(&*itBtn, true);
 
+	auto *pItem = addInitRow(nullptr, nullptr, "0", "未实现", "未启动");
+	//设置焦点
+	ui->tableWidget->setFocus();
+	//设置编辑中
+	ui->tableWidget->editItem(pItem);
 
-    int nRow = ui->tableWidget->rowCount();
-    //总行数增加1
-    ui->tableWidget->setRowCount(nRow + 1);
-
-    QTableWidgetItem *pItemBindPort = nullptr; 
-    for(auto nColIdx = 0; nColIdx < 5; nColIdx++){
-
-        QTableWidgetItem *pItem = new QTableWidgetItem();
-        if(!pItemBindPort)
-            pItemBindPort = pItem;
-
-        ui->tableWidget->setItem(nRow, nColIdx, pItem);
-
-        if(2 > nColIdx)
-            continue;
-        //不可编辑
-        pItem->setFlags(pItem->flags() & (~Qt::ItemIsEditable));
-    }
-    //设置单元格处于编辑状态
-    ui->tableWidget->setFocus();
-    ui->tableWidget->editItem(pItemBindPort);
 }
 
 
 void MainWindow::on_pushButtonOk_clicked()
 {
     unsigned int uBindPort = 0;
-    const char* pszInfoRole = nullptr;
     QString qstrHost, qstrBindPort;
     int nRowIdx = ui->tableWidget->rowCount() - 1;
+
     for(auto nColIdx = 0; nColIdx < 2; nColIdx++){
-        pszInfoRole = u8"监听端口";
+        const char* pszInfoRole = u8"监听端口";
         QString* pFillTarget = &qstrBindPort;
         switch (nColIdx) {
-        case 1:
-            pFillTarget = &qstrHost;
-            pszInfoRole = u8"下游服务器";
-            break;
-      }
+            case 1:
+                pFillTarget = &qstrHost;
+                pszInfoRole = u8"下游服务器";
+                break;
+        }
 
         auto *pItem = ui->tableWidget->item(nRowIdx, nColIdx);
-        if(!pItem){
-            pItem = new QTableWidgetItem();
-            //添加到界面
-            ui->tableWidget->setItem(nRowIdx, nColIdx, pItem);
-        }
         if(pItem->text().isEmpty()){
             QMessageBox::information(this, "information", QString(pszInfoRole) + "为空");
             return;
@@ -206,92 +394,32 @@ void MainWindow::on_pushButtonOk_clicked()
     
     if(0 == (uBindPort = qstrBindPort.toUInt())){
         //非法端口
-        QMessageBox::information(this, "information", QString::fromUtf8(pszInfoRole) + "非法输入");
+        QMessageBox::information(this, "information", "监听端口非法输入");
         return;
     }
 
     //TODO:判断其他参数合法
     auto qstrListHostInfo = qstrHost.split(":");
     if(2 != qstrListHostInfo.size()) {
-        QMessageBox::information(this, "information", QString::fromUtf8(pszInfoRole) + "非法输入");
+        QMessageBox::information(this, "information", "下游服务器非法输入");
         return;
     }
 
-    //调用接口
-    auto spForwarder = std::make_shared<forwarder>(uBindPort, \
-        qstrListHostInfo.at(0).toStdString().data(), qstrListHostInfo.at(1).toStdString().data());
-
-    std::unique_lock<std::mutex> lck(m_mtxForward);
-    auto itF = m_mapForwards.find(uBindPort);
-    if(itF != m_mapForwards.end()){
-        QMessageBox::information(this, "information", "监听端口已存在");
-        return;
-    }
-
-    m_mapForwards[uBindPort] = spForwarder;
-    lck.unlock();
-
-    spForwarder->setNotifyConnCnt([this](unsigned int uListenPort, unsigned int uConnCnt){
-        int nRowCnt = ui->tableWidget->rowCount();
-        if(0 > nRowCnt)
-            return;
-        //从表格中找到当前端口
-        QString qstrBindPort = QString::number(uListenPort);
-        for(auto i = 0; i < nRowCnt; i++) {
-            auto pItem = ui->tableWidget->item(i, 0);
-            if(!pItem)
-                continue;
-            //TODO:确认当前连接不是编辑中的连接
-            if(pItem->text() != qstrBindPort)
-                continue;
-            pItem = ui->tableWidget->item(i, 2);
-            if(!pItem)
-                continue;
-            pItem->setText(QString::number(uConnCnt));
-            return;
-        }
-    });
+	auto spForwarder = addForwarder(uBindPort, qstrListHostInfo[0].toUtf8().data(), qstrListHostInfo[1].toUtf8().data());
 
 
     //结束编辑状态
     m_bAddItem = false;
 
     //UI flash
-    ui_init();
-    // for(auto& itBtn : {ui->pushButtonAdd, ui->pushButtonDel})
-    //     setBtnState(&*itBtn, false);
-    // for(auto& itBtn : {ui->pushButtonOk, ui->pushButtonCancel})
-    //     setBtnState(&*itBtn, true);
-
-    //处于不可编辑状态
-    for(auto nColIdx = 0; nColIdx < 2; nColIdx++){
-        auto *pItem = ui->tableWidget->item(nRowIdx, nColIdx);
-        if(!pItem) 
-            continue;
-	    pItem->setFlags(pItem->flags() & (~Qt::ItemIsEditable));
-    }
-
-    for(unsigned int nColIdx = 2; nColIdx < 5; nColIdx++)
-    {
-        //TODO:其他几行不可被编辑,然后初始化时就assign
-        QTableWidgetItem *pItem = new QTableWidgetItem();
-        ui->tableWidget->setItem(nRowIdx, nColIdx, pItem); 
-        switch (nColIdx)
-        {
-            case 2:
-                pItem->setText(u8"0");
-                break;
-            case 3:
-                pItem->setText(u8"null");
-                break;
-            case 4:
-                pItem->setText(u8"启动中");
-                break;
-            default:
-                break;
-        }
-    }
-    
+    updateBtns();
+  
+	//不可编辑
+	for (auto i = 0; i < 2; i++) {
+		auto pItem = ui->tableWidget->item(nRowIdx, i);
+		if(pItem)
+			pItem->setFlags(pItem->flags() & (~Qt::ItemIsEditable));
+	}
 
     //取消焦点
     ui->tableWidget->setCurrentItem(NULL);
@@ -305,6 +433,8 @@ void MainWindow::on_pushButtonOk_clicked()
         return;
     }
     pItem->setText(u8"启动成功");
+
+	saveConfig();
 }
 
 
@@ -314,7 +444,7 @@ void MainWindow::on_pushButtonCancel_clicked()
 
     ui->tableWidget->removeRow(nRowIdx);
 
-    ui_init();
+    updateBtns();
 
     m_bAddItem = false;
 }
@@ -328,11 +458,11 @@ void MainWindow::on_pushButtonDel_clicked()
 
     auto *pItem = ui->tableWidget->item(nSelRow, 0);
     if(pItem) {
-        std::shared_ptr<forwarder> spForwarder = nullptr;
+        std::shared_ptr<Forwarder> spForwarder = nullptr;
         auto uBindPort = pItem->text().toUInt();
         std::unique_lock<std::mutex> lck(m_mtxForward);
         auto itF = m_mapForwards.find(uBindPort);
-        if(itF != m_mapForwards.end()){
+        if(itF != m_mapForwards.end()) {
             spForwarder = std::move(itF->second);
             m_mapForwards.erase(itF);
         }
@@ -343,6 +473,103 @@ void MainWindow::on_pushButtonDel_clicked()
 
     ui->tableWidget->removeRow(nSelRow);
 
-    ui_init();
+	saveConfig();
+
+	updateBtns();
+}
+
+void MainWindow::on_pushButtonStart_clicked()
+{
+	//根据当前的状态更改图标
+	int nCurrRowIdx = ui->tableWidget->currentRow();
+
+	//获取监听端口
+	auto qstrBindPort = getItemText(nCurrRowIdx, 0);
+	auto uBindPort = atoi(qstrBindPort.toUtf8());
+	if (0 == uBindPort)
+		return;
+	//获取forwarder
+	auto spForwarder = getForwarder(uBindPort);
+	if (nullptr == spForwarder)
+		return;
+
+	auto pItemStatus = getItem(nCurrRowIdx, 4);
+	if (0 != spForwarder->start()) {
+		pItemStatus->setText(u8"启动失败");
+		return;
+	}
+	pItemStatus->setText(u8"启动成功");
+	ui->pushButtonStart->setText("||");
+}
+
+
+void MainWindow::on_tableWidget_currentCellChanged(int currentRow, int currentColumn, int previousRow, int previousColumn)
+{
+	if (currentRow == previousRow)
+		return;
+	auto pItemStatus = getItem(currentRow, 4);
+	if (!pItemStatus)
+		return;
+	if (!pItemStatus->text().compare("未启动")) {
+		ui->pushButtonStart->setStyleSheet("QPushButton {"
+			"	font: 700;"
+			"	font-size:40px;"
+			"	color:white;"
+			"	border-radius:25px;"
+			"   border-width:3px;"
+			"	border-style:solid;"
+			"	border-color: white;"
+			"	background-color:transparent;"
+			"}"
+			"QPushButton:hover {"
+			"	font: 700;"
+			"	font-size:35px;"
+			"	color: rgb(128, 128, 128);"
+			"	border-radius:25px;"
+			"    border-width:3px;"
+			"	border-style:solid;"
+			"	background-color:white;"
+			"}"
+			"QPushButton:pressed {"
+			"	font: 700;"
+			"	font-size:35px;"
+			"	color:white;"
+			"	border-color:white;"
+			"   border-width:0px;"
+			"	border-style:solid;"
+			"	background-color:rgb(128, 128, 128);"
+		);
+		ui->pushButtonStart->setText("▶");
+		return;
+	}
+	ui->pushButtonStart->setStyleSheet("QPushButton {"
+		"	font: 700;"
+		"	font-size:25px;"
+		"	color:white;"
+		"	border-radius:25px;"
+		"   border-width:3px;"
+		"	border-style:solid;"
+		"	border-color: white;"
+		"	background-color:transparent;"
+		"}"
+		"QPushButton:hover {"
+		"	font: 700;"
+		"	font-size:25px;"
+		"	color: rgb(128, 128, 128);"
+		"	border-radius:25px;"
+		"    border-width:3px;"
+		"	border-style:solid;"
+		"	background-color:white;"
+		"}"
+		"QPushButton:pressed {"
+		"	font: 700;"
+		"	font-size:25px;"
+		"	color:white;"
+		"	border-color:white;"
+		"   border-width:0px;"
+		"	border-style:solid;"
+		"	background-color:rgb(128, 128, 128);"
+	);
+	ui->pushButtonStart->setText("||");
 }
 
