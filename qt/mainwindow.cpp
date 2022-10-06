@@ -259,6 +259,7 @@ QTableWidgetItem* MainWindow::addInitRow(const char* pszBindPort, const char* ps
 			continue;
 		}
 	}
+	//setTabOrder(ui->tableWidget->cellWidget(nRow, 0), ui->tableWidget->cellWidget(nRow, 1));
 	//设置行高
 	ui->tableWidget->setRowHeight(nRow, 40);
 	ui->tableWidget->setColumnWidth(0, ui->tableWidget->columnWidth(0));
@@ -360,6 +361,8 @@ void MainWindow::on_pushButtonAdd_clicked()
         setBtnState(&*itBtn, true);
 
 	auto *pItem = addInitRow(nullptr, nullptr, "0", "未实现", "未启动");
+	//选中该行
+	ui->tableWidget->selectRow(pItem->row());
 	//设置焦点
 	ui->tableWidget->setFocus();
 	//设置编辑中
