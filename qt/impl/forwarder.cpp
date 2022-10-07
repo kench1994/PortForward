@@ -14,11 +14,15 @@ Forwarder::Forwarder(const unsigned int uPort, const char* pszHost, const char* 
 	 )
 {
 	qDebug() << pszHost << ":" << pszPort;
+
+	auto* pBlader = IO_EXCUTOR.pick_blader();
+	m_spRater = std::make_shared<utils::twisted_io_rate>(pBlader->spIO);
 }
 
 
 Forwarder::~Forwarder()
 {
+	m_spRater->stop();
 }
 
 int Forwarder::start()
@@ -37,6 +41,9 @@ int Forwarder::start()
 	//端口监听器创建失败
 	if (!m_spAcceptor)
 		return -1;
+
+	//流量速率计算
+	m_spRater->start();
 
 	//开启监听
 	beginListen();
@@ -86,12 +93,9 @@ void Forwarder::onListen(\
 	qDebug() << "conn join";
 
 	auto id = m_spIdGen->increase();
-	auto spFrontend = std::make_shared<Frontend>();
-	spFrontend->setRole("Front-end");
-	auto spBackend = std::make_shared<Backend>();
-	spBackend->setRole("Back-end");
-	std::weak_ptr<Frontend> wspFront(spFrontend);
-	std::weak_ptr<Backend> wspBack(spBackend);
+
+	auto spFrontend = std::make_shared<Frontend>(); spFrontend->setRole("Front-end"); std::weak_ptr<Frontend> wspFront(spFrontend);
+	auto spBackend = std::make_shared<Backend>(); spBackend->setRole("Back-end"); std::weak_ptr<Backend> wspBack(spBackend);
 
 	spFrontend->initial(std::move(spSocket), [wspBack, this](boost::shared_array<char>&& spszBuff, unsigned int uBufLen, const int& nError, const char* pszErrInfo) {
 
@@ -112,6 +116,8 @@ void Forwarder::onListen(\
 		auto spPacket = std::make_shared<PACKET>(std::forward<boost::shared_array<char>&&>(spszBuff), uBufLen);
 		spBackend->addToSendChains(spPacket);
 
+		m_spRater->upload_work(uBufLen);
+
 	}, [this, id](const int& nErrorCode, const char* pszErrInfo){
 
 		assert(nErrorCode);
@@ -125,16 +131,13 @@ void Forwarder::onListen(\
 		}
 	});
 
-	//TODO:frontend 断开 通知backend 断开
-	//backend断开删除这个relay
-	//前端可以统计forwarder持有的relay（连接数等信息
-
 	//TODO：通知前端
-	spBackend->initial(m_spNodeInfo, [wspFront](boost::shared_array<char>&& spszBuff, unsigned int uBufLen, const int& nError, const char* pszErrInfo) {
+	spBackend->initial(m_spNodeInfo, [wspFront, this](boost::shared_array<char>&& spszBuff, unsigned int uBufLen, const int& nError, const char* pszErrInfo) {
+
 
 		qDebug() << "Back-end flow in " << uBufLen;
 
-		std::shared_ptr<Frontend> spFrontend;
+		std::shared_ptr<Frontend> spFrontend = nullptr;
 		if (wspFront.expired() || CHECK_PROMT_WSP_FAILED(spFrontend, wspFront))
 			return;
 
@@ -149,6 +152,8 @@ void Forwarder::onListen(\
 		//转发数据流量
 		auto spPacket = std::make_shared<PACKET>(std::forward<boost::shared_array<char>&&>(spszBuff), uBufLen);
 		spFrontend->addToSendChains(spPacket);
+
+		m_spRater->download_work(uBufLen);
 
 	}, [this, id, wspFront](const int& nErrorCode, const char* pszErrInfo){
 
@@ -187,6 +192,7 @@ void Forwarder::onListen(\
 		}		
 	});
 
+
 	std::unique_lock<std::mutex> lck(m_mtxRelays);
 	m_mapRelays[id] = std::move(std::make_shared<Relay>(spFrontend, spBackend));
 	lck.unlock();
@@ -224,4 +230,9 @@ std::shared_ptr<Relay> Forwarder::delRelay(const unsigned int id)
 void Forwarder::setNotifyConnCnt(const fntNotifyForwardConnCnt &fnNotify)
 {
 	m_fnNotifyConnCnt = fnNotify;
+}
+
+void Forwarder::setNotifyRating(const utils::twisted_io_rate::fntNotifyTwistedRating& fnNotify)
+{
+	m_spRater->setNotify(fnNotify);
 }

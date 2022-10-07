@@ -24,7 +24,6 @@ public:
 protected:
     void updateBtns();
 
-    //改变按钮状态
     void changeBtnState(QPushButton* pBtn);
 
     void setBtnState(QPushButton* pBtn, bool bEnable);
@@ -59,8 +58,6 @@ private slots:
     void on_tableWidget_currentCellChanged(int currentRow, int currentColumn, int previousRow, int previousColumn);
 
 private:
-    bool m_bAddItem;
-
     Ui::MainWindow *ui;
 
     std::mutex m_mtxForward;

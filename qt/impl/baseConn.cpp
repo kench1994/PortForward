@@ -160,7 +160,6 @@ void BaseConn::doRecv()
 	boost::shared_array<char>spszBuffer(new char[uBufferSize]);
 	memset(spszBuffer.get(), 0, uBufferSize);
 
-	//m_abWorking = true;
 	m_spSocket->async_read_some(boost::asio::buffer(spszBuffer.get(), uBufferSize),
 		//boost::asio::bind_executor(*m_spStrand, 
 		std::bind(&BaseConn::onRecv, this,

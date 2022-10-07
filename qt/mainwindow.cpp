@@ -11,7 +11,6 @@
 #include "GuiThreadRun.hpp"
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
-    , m_bAddItem(false)
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
@@ -141,9 +140,6 @@ void MainWindow::setBtnState(QPushButton* pBtn, bool bEnable)
 void MainWindow::saveConfig()
 {
 	//读取当前表格中的状态
-	if (m_bAddItem)
-		return;
-
 	nlohmann::json jsonArray;
 	int nRowCnt = ui->tableWidget->rowCount();
 	for (int nRowIdx = 0; nRowIdx < nRowCnt; nRowIdx++) {
@@ -196,7 +192,7 @@ void MainWindow::loadConfig()
 				if (2 != vHostInfo.size())
 					continue;
 
-				addInitRow(strPort.data(), strServer.data(), "0", "未实现", "未启动", true);
+				addInitRow(strPort.data(), strServer.data(), "0", "null", "未启动", true);
 				addForwarder(uPort, vHostInfo[0].data(), vHostInfo[1].data());
 			} catch (...) {
 
@@ -259,7 +255,6 @@ QTableWidgetItem* MainWindow::addInitRow(const char* pszBindPort, const char* ps
 			continue;
 		}
 	}
-	//setTabOrder(ui->tableWidget->cellWidget(nRow, 0), ui->tableWidget->cellWidget(nRow, 1));
 	//设置行高
 	ui->tableWidget->setRowHeight(nRow, 40);
 	ui->tableWidget->setColumnWidth(0, ui->tableWidget->columnWidth(0));
@@ -292,13 +287,12 @@ std::shared_ptr<Forwarder> MainWindow::addForwarder(const unsigned int uBindPort
 			auto pItem = ui->tableWidget->item(i, 0);
 			if (!pItem)
 				continue;
-			//TODO:确认当前连接不是编辑中的连接
 			if (pItem->text() != qstrBindPort)
 				continue;
-			pItem = ui->tableWidget->item(i, 2);
+
+			pItem = getItem(i, 2);
 			if (!pItem)
 				continue;
-			//TODO:在主线程中更新UI
 			fprintf(stdout, "conn cnt:%d\r\n", uConnCnt);
 			QString qstrConnNum = QString::number(uConnCnt);
 
@@ -309,6 +303,35 @@ std::shared_ptr<Forwarder> MainWindow::addForwarder(const unsigned int uBindPort
 			return;
 		}
 	});
+
+	spForwarder->setNotifyRating(
+		[this, uBindPort](const uint64_t& uUpBytes, const uint64_t & uDownBytes) {
+			int nRowCnt = ui->tableWidget->rowCount();
+			if (0 > nRowCnt)
+				return;
+			//从表格中找到当前端口
+			QString qstrBindPort = QString::number(uBindPort);
+			for (auto i = 0; i < nRowCnt; i++) {
+				auto *pItem = getItem(i, 0);
+				if (!pItem)
+					continue;
+				if (pItem->text() != qstrBindPort)
+					continue;
+
+				pItem = getItem(i, 3);
+				if (!pItem)
+					continue;
+				char szRate[32]{0};
+				sprintf_s(szRate, 31, "%.2fkb/s ↑\n%.2fkb/s ↓", uUpBytes / 1000.0, uDownBytes / 1000.0);
+				QString qstrRate = QString::fromUtf8(szRate);
+				auto updateRate = [pItem, qstrRate]() {
+					pItem->setText(qstrRate);
+				};
+				GuiThreadRun::inst().excute(updateRate);
+				return;
+			}
+		}
+	);
 
 	return spForwarder;
 }
@@ -353,14 +376,12 @@ void MainWindow::changeBtnState(QPushButton* pBtn)
 
 void MainWindow::on_pushButtonAdd_clicked()
 {
-    m_bAddItem = true;
-
     for(auto& itBtn : {ui->pushButtonAdd, ui->pushButtonDel})
         setBtnState(&*itBtn, false);
     for(auto& itBtn : {ui->pushButtonOk, ui->pushButtonCancel})
         setBtnState(&*itBtn, true);
 
-	auto *pItem = addInitRow(nullptr, nullptr, "0", "未实现", "未启动");
+	auto *pItem = addInitRow(nullptr, nullptr, "0", "null", "未启动");
 	//选中该行
 	ui->tableWidget->selectRow(pItem->row());
 	//设置焦点
@@ -403,16 +424,14 @@ void MainWindow::on_pushButtonOk_clicked()
 
     //TODO:判断其他参数合法
     auto qstrListHostInfo = qstrHost.split(":");
-    if(2 != qstrListHostInfo.size()) {
+    if(2 != qstrListHostInfo.size() || !qstrListHostInfo[1].toUInt()) {
         QMessageBox::information(this, "information", "下游服务器非法输入");
         return;
     }
 
-	auto spForwarder = addForwarder(uBindPort, qstrListHostInfo[0].toUtf8().data(), qstrListHostInfo[1].toUtf8().data());
+	std::string strHost = qstrListHostInfo[0].toUtf8(), strPort = qstrListHostInfo[1].toUtf8();
+	auto spForwarder = addForwarder(uBindPort, strHost.c_str(), strPort.c_str());
 
-
-    //结束编辑状态
-    m_bAddItem = false;
 
     //UI flash
     updateBtns();
@@ -448,8 +467,6 @@ void MainWindow::on_pushButtonCancel_clicked()
     ui->tableWidget->removeRow(nRowIdx);
 
     updateBtns();
-
-    m_bAddItem = false;
 }
 
 
@@ -488,7 +505,7 @@ void MainWindow::on_pushButtonStart_clicked()
 
 	//获取监听端口
 	auto qstrBindPort = getItemText(nCurrRowIdx, 0);
-	auto uBindPort = atoi(qstrBindPort.toUtf8());
+	auto uBindPort = qstrBindPort.toUInt();
 	if (0 == uBindPort)
 		return;
 	//获取forwarder

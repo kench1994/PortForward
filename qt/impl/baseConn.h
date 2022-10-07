@@ -2,6 +2,7 @@
 #include <boost/asio.hpp>
 #include <queue>
 #include "conf.h"
+
 class BaseConn
 	: public std::enable_shared_from_this<BaseConn>
 {
