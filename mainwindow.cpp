@@ -18,7 +18,11 @@ MainWindow::MainWindow(QWidget *parent)
     auto *pHorizontalHeader = ui->tableWidget->horizontalHeader();
     pHorizontalHeader->setSectionResizeMode(QHeaderView::Stretch);
     pHorizontalHeader->setMinimumHeight(60);
-    ui->tableWidget->setHorizontalHeaderLabels({u8"监听端口", u8"下游服务器", u8"连接数", u8"实时流量", u8"状态"});
+    ui->tableWidget->setHorizontalHeaderLabels({u8"监听端口", u8"  下游服务器  ", u8"连接数", u8"实时流量", u8"状态"});
+	for (auto i : { 0, 2, 4 }) {
+		ui->tableWidget->horizontalHeader()->setSectionResizeMode(i, QHeaderView::Fixed);
+		ui->tableWidget->setColumnWidth(i, 115);
+	}
     //隐藏纵向表头
     ui->tableWidget->verticalHeader()->setHidden(true);
     //选择行为单位
@@ -512,14 +516,46 @@ void MainWindow::on_pushButtonStart_clicked()
 	auto spForwarder = getForwarder(uBindPort);
 	if (nullptr == spForwarder)
 		return;
-
 	auto pItemStatus = getItem(nCurrRowIdx, 4);
-	if (0 != spForwarder->start()) {
-		pItemStatus->setText(u8"启动失败");
+	if (!ui->pushButtonStart->text().compare("||"))
+	{
+		if (0 != spForwarder->start()) {
+			pItemStatus->setText(u8"启动失败");
+			return;
+		}
+		pItemStatus->setText(u8"启动成功");
+		ui->pushButtonStart->setText("||");
+		ui->pushButtonStart->setStyleSheet("QPushButton {"
+			"	font: 700;"
+			"	font-size:25px;"
+			"	color:white;"
+			"	border-radius:25px;"
+			"   border-width:3px;"
+			"	border-style:solid;"
+			"	border-color: white;"
+			"	background-color:transparent;"
+			"}"
+			"QPushButton:hover {"
+			"	font: 700;"
+			"	font-size:25px;"
+			"	color: rgb(128, 128, 128);"
+			"	border-radius:25px;"
+			"    border-width:3px;"
+			"	border-style:solid;"
+			"	background-color:white;"
+			"}"
+			"QPushButton:pressed {"
+			"	font: 700;"
+			"	font-size:25px;"
+			"	color:white;"
+			"	border-color:white;"
+			"   border-width:0px;"
+			"	border-style:solid;"
+			"	background-color:rgb(128, 128, 128);"
+		);
 		return;
 	}
-	pItemStatus->setText(u8"启动成功");
-	ui->pushButtonStart->setText("||");
+	spForwarder->stop();
 }
 
 

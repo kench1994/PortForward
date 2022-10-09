@@ -1,4 +1,4 @@
-set_languages("c11", "cxx17")
+set_languages("c11", "cxx14")
 add_requires("vcpkg::boost-asio" , {configs = {shared = true, vs_runtime = "MT"}, alias = "asio"})
 add_requires("vcpkg::nlohmann-json" , {configs = {shared = true, vs_runtime = "MT"}, alias = "nlohmann-json"})
 

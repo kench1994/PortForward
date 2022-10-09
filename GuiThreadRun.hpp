@@ -9,18 +9,6 @@
 #include <QCoreApplication>
 
 
-/*!
- * \brief  用于将函数放在Qt的GUI线程中调用，通常用于需要在子线程中
- * 操作UI对象的操作，可以调用普通函数、类成员函数、lambada表达式等
- * 任何形式的函数。
- * 使用前需在GUI线程调用一下GuiThreadRun::inst()后才能正常使用。
- * 使用方法如下：
- * 1. 普通函数      GuiThreadRun::excute(func,...)  //...表示函数的参数
- * 2. 类成员函数     GuiThreadRun::excute(&ClassName::func,classobj pointer,...)  
- * 
- * \author ICOODE
- * \date   2021/07/19
- */
 class GuiThreadRun : public QObject {
     Q_OBJECT
 
