@@ -18,12 +18,15 @@ BaseConn::BaseConn()
 BaseConn::~BaseConn()
 {
 	//如果还未关闭发送通道等待发送完毕
+	std::unique_lock<std::mutex> lck(m_mtxShutdownState);
 	while (!(m_uShutdownState & 0x10) && m_Queue.size()) 
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	
 	//等待接收通道关闭
 	while (!(m_uShutdownState & 0x01))
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	lck.unlock();
+
 
 	if (m_fnOnConnStatus) {
 		m_fnOnConnStatus(-1, "deconstruct");
@@ -43,6 +46,7 @@ void BaseConn::setRole(const char* pszRole)
 
 void BaseConn::shutdown(const unsigned int u)
 {
+	std::unique_lock<std::mutex> lck(m_mtxShutdownState);
 	switch (u)
 	{
 	case 0x01:
@@ -97,12 +101,16 @@ void BaseConn::triggerSend(const std::shared_ptr<PACKET>& spPacket)
 		return;
 	}
 	m_spSocket->async_send(boost::asio::buffer(spPacket->spszBuff.get(), spPacket->uRealLen),
-		std::bind(&BaseConn::onSend, this, std::placeholders::_1, spPacket)
+		std::bind(&BaseConn::onSend, this, std::placeholders::_1, spPacket, shared_from_this())
 	);
 }
 
-void BaseConn::onSend(const boost::system::error_code& ec, const std::shared_ptr<PACKET>& spPacket)
+void BaseConn::onSend(const boost::system::error_code& ec, const std::shared_ptr<PACKET>& spPacket, std::weak_ptr<BaseConn> wspThis)
 {
+	std::shared_ptr<BaseConn> spConn{nullptr};
+	if (wspThis.expired() || CHECK_PROMT_WSP_FAILED(spConn, wspThis))
+		return;
+
 	if (ec) {
 		qDebug() << m_strRole.data() << " onSend ec " << ec.message().data();
 
@@ -165,17 +173,23 @@ void BaseConn::doRecv()
 		std::bind(&BaseConn::onRecv, this,
 			std::placeholders::_1,
 			std::placeholders::_2,
-			spszBuffer
+			spszBuffer,
+			shared_from_this()
 		)//)
 	);
 }
 
 void BaseConn::onRecv(\
 	const boost::system::error_code& ec,
-	size_t  uRecvSize,
-	boost::shared_array<char>spszBuff
+	size_t uRecvSize,
+	boost::shared_array<char> spszBuff,
+	std::weak_ptr<BaseConn> wspThis
 )
 {
+	std::shared_ptr<BaseConn> spConn{ nullptr };
+	if (wspThis.expired() || CHECK_PROMT_WSP_FAILED(spConn, wspThis))
+		return;
+
 	if (uRecvSize) {
 		auto recvLen = static_cast<unsigned int>(uRecvSize);
 		qDebug() <<  m_strRole.data() << " flow in " <<  recvLen;
@@ -185,12 +199,13 @@ void BaseConn::onRecv(\
 
 	if (ec) {
 		qDebug() << m_strRole.data() << " onRecv ec " << ec.message().data();
-
+		std::unique_lock<std::mutex> lck(m_mtxShutdownState);
 		//如何处理好半连接 is a question
 		if (!(m_uShutdownState & 0x01)) {
 			m_spSocket->shutdown(boost::asio::socket_base::shutdown_receive);
 			m_uShutdownState |= 0x01;
 		}
+		lck.unlock();
 		//还需要通知到外部
 		if (m_fnOnConnStatus) {
 			m_fnOnConnStatus(ec.value(), ec.message().data());

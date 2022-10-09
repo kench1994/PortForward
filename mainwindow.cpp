@@ -18,7 +18,7 @@ MainWindow::MainWindow(QWidget *parent)
     auto *pHorizontalHeader = ui->tableWidget->horizontalHeader();
     pHorizontalHeader->setSectionResizeMode(QHeaderView::Stretch);
     pHorizontalHeader->setMinimumHeight(60);
-    ui->tableWidget->setHorizontalHeaderLabels({u8"监听端口", u8"  下游服务器  ", u8"连接数", u8"实时流量", u8"状态"});
+    ui->tableWidget->setHorizontalHeaderLabels({u8"监听端口", u8"下游服务器", u8"连接数", u8"实时流量", u8"状态"});
 	for (auto i : { 0, 2, 4 }) {
 		ui->tableWidget->horizontalHeader()->setSectionResizeMode(i, QHeaderView::Fixed);
 		ui->tableWidget->setColumnWidth(i, 115);
@@ -67,15 +67,82 @@ void MainWindow::updateBtns()
     }
 }
 
+void MainWindow::updatePlayBtn(bool bOnPlay)
+{
+	if (bOnPlay) {
+		ui->pushButtonStart->setStyleSheet("QPushButton {"
+			"	font: 700;"
+			"	font-size:40px;"
+			"	color:white;"
+			"	border-radius:25px;"
+			"   border-width:3px;"
+			"	border-style:solid;"
+			"	border-color: white;"
+			"	background-color:transparent;"
+			"}"
+			"QPushButton:hover {"
+			"	font: 700;"
+			"	font-size:35px;"
+			"	color: rgb(128, 128, 128);"
+			"	border-radius:25px;"
+			"    border-width:3px;"
+			"	border-style:solid;"
+			"	background-color:white;"
+			"}"
+			"QPushButton:pressed {"
+			"	font: 700;"
+			"	font-size:35px;"
+			"	color:white;"
+			"	border-color:white;"
+			"   border-width:0px;"
+			"	border-style:solid;"
+			"	background-color:rgb(128, 128, 128);"
+			"}"
+		);
+		ui->pushButtonStart->setText("▶");
+		return;
+	}
+	ui->pushButtonStart->setStyleSheet("QPushButton {"
+		"	font: 700;"
+		"	font-size:25px;"
+		"	color:white;"
+		"	border-radius:25px;"
+		"   border-width:3px;"
+		"	border-style:solid;"
+		"	border-color: white;"
+		"	background-color:transparent;"
+		"}"
+		"QPushButton:hover {"
+		"	font: 700;"
+		"	font-size:25px;"
+		"	color: rgb(128, 128, 128);"
+		"	border-radius:25px;"
+		"    border-width:3px;"
+		"	border-style:solid;"
+		"	background-color:white;"
+		"}"
+		"QPushButton:pressed {"
+		"	font: 700;"
+		"	font-size:25px;"
+		"	color:white;"
+		"	border-color:white;"
+		"   border-width:0px;"
+		"	border-style:solid;"
+		"	background-color:rgb(128, 128, 128);"
+		"}"
+	);
+	ui->pushButtonStart->setText("||");
+}
+
 void MainWindow::setBtnState(QPushButton* pBtn, bool bEnable)
 {
     if(!pBtn)
         return;
+	if (pBtn == ui->pushButtonStart) {
+		return;
+	}
     pBtn->setEnabled(bEnable);
     if(bEnable){
-		if (pBtn == ui->pushButtonStart) {
-			return;
-		}
         pBtn->setStyleSheet("QPushButton {"
            "	font: 700;"
            "	font-size:35px;"
@@ -106,9 +173,7 @@ void MainWindow::setBtnState(QPushButton* pBtn, bool bEnable)
            "}"
         );
     }else{
-		if (pBtn == ui->pushButtonStart) {
-			return;
-		}
+
         pBtn->setStyleSheet("QPushButton {"
            "	font: 700;"
            "	font-size:35px;"
@@ -280,33 +345,7 @@ std::shared_ptr<Forwarder> MainWindow::addForwarder(const unsigned int uBindPort
 	m_mapForwards[uBindPort] = spForwarder;
 	lck.unlock();
 
-	spForwarder->setNotifyConnCnt([this](unsigned int uListenPort, unsigned int uConnCnt) {
-		qDebug() << "listenPort:" << uListenPort << ",curr conn cnt:" << uConnCnt;
-		int nRowCnt = ui->tableWidget->rowCount();
-		if (0 > nRowCnt)
-			return;
-		//从表格中找到当前端口
-		QString qstrBindPort = QString::number(uListenPort);
-		for (auto i = 0; i < nRowCnt; i++) {
-			auto pItem = ui->tableWidget->item(i, 0);
-			if (!pItem)
-				continue;
-			if (pItem->text() != qstrBindPort)
-				continue;
-
-			pItem = getItem(i, 2);
-			if (!pItem)
-				continue;
-			fprintf(stdout, "conn cnt:%d\r\n", uConnCnt);
-			QString qstrConnNum = QString::number(uConnCnt);
-
-			auto updateConnCntShow = [pItem, qstrConnNum]() {
-				pItem->setText(qstrConnNum);
-			};
-			GuiThreadRun::inst().excute(updateConnCntShow);
-			return;
-		}
-	});
+	spForwarder->setNotifyConnCnt(std::bind(&MainWindow::onConnCntChanged, this, std::placeholders::_1, std::placeholders::_2));
 
 	spForwarder->setNotifyRating(
 		[this, uBindPort](const uint64_t& uUpBytes, const uint64_t & uDownBytes) {
@@ -340,6 +379,35 @@ std::shared_ptr<Forwarder> MainWindow::addForwarder(const unsigned int uBindPort
 	return spForwarder;
 }
 
+
+void MainWindow::onConnCntChanged(unsigned int uListenPort, unsigned int uConnCnt)
+{
+	qDebug() << "listenPort:" << uListenPort << ",curr conn cnt:" << uConnCnt;
+	int nRowCnt = ui->tableWidget->rowCount();
+	if (0 > nRowCnt)
+		return;
+	//从表格中找到当前端口
+	QString qstrBindPort = QString::number(uListenPort);
+	for (auto i = 0; i < nRowCnt; i++) {
+		auto pItem = ui->tableWidget->item(i, 0);
+		if (!pItem)
+			continue;
+		if (pItem->text() != qstrBindPort)
+			continue;
+
+		pItem = getItem(i, 2);
+		if (!pItem)
+			continue;
+		fprintf(stdout, "conn cnt:%d\r\n", uConnCnt);
+		QString qstrConnNum = QString::number(uConnCnt);
+
+		auto updateConnCntShow = [pItem, qstrConnNum]() {
+			pItem->setText(qstrConnNum);
+		};
+		GuiThreadRun::inst().excute(updateConnCntShow);
+		return;
+	}
+}
 QString MainWindow::getItemText(const int nRow, const int nCol)
 {
 	QString qstrResult;
@@ -517,45 +585,21 @@ void MainWindow::on_pushButtonStart_clicked()
 	if (nullptr == spForwarder)
 		return;
 	auto pItemStatus = getItem(nCurrRowIdx, 4);
-	if (!ui->pushButtonStart->text().compare("||"))
+	if (ui->pushButtonStart->text().compare(u8"||"))
 	{
 		if (0 != spForwarder->start()) {
 			pItemStatus->setText(u8"启动失败");
 			return;
 		}
 		pItemStatus->setText(u8"启动成功");
-		ui->pushButtonStart->setText("||");
-		ui->pushButtonStart->setStyleSheet("QPushButton {"
-			"	font: 700;"
-			"	font-size:25px;"
-			"	color:white;"
-			"	border-radius:25px;"
-			"   border-width:3px;"
-			"	border-style:solid;"
-			"	border-color: white;"
-			"	background-color:transparent;"
-			"}"
-			"QPushButton:hover {"
-			"	font: 700;"
-			"	font-size:25px;"
-			"	color: rgb(128, 128, 128);"
-			"	border-radius:25px;"
-			"    border-width:3px;"
-			"	border-style:solid;"
-			"	background-color:white;"
-			"}"
-			"QPushButton:pressed {"
-			"	font: 700;"
-			"	font-size:25px;"
-			"	color:white;"
-			"	border-color:white;"
-			"   border-width:0px;"
-			"	border-style:solid;"
-			"	background-color:rgb(128, 128, 128);"
-		);
+		updatePlayBtn(false);
 		return;
 	}
 	spForwarder->stop();
+	pItemStatus->setText(u8"已停止");
+	getItem(nCurrRowIdx, 2)->setText("0");
+	getItem(nCurrRowIdx, 3)->setText("null");
+	updatePlayBtn(true);
 }
 
 
@@ -566,66 +610,10 @@ void MainWindow::on_tableWidget_currentCellChanged(int currentRow, int currentCo
 	auto pItemStatus = getItem(currentRow, 4);
 	if (!pItemStatus)
 		return;
-	if (!pItemStatus->text().compare("未启动")) {
-		ui->pushButtonStart->setStyleSheet("QPushButton {"
-			"	font: 700;"
-			"	font-size:40px;"
-			"	color:white;"
-			"	border-radius:25px;"
-			"   border-width:3px;"
-			"	border-style:solid;"
-			"	border-color: white;"
-			"	background-color:transparent;"
-			"}"
-			"QPushButton:hover {"
-			"	font: 700;"
-			"	font-size:35px;"
-			"	color: rgb(128, 128, 128);"
-			"	border-radius:25px;"
-			"    border-width:3px;"
-			"	border-style:solid;"
-			"	background-color:white;"
-			"}"
-			"QPushButton:pressed {"
-			"	font: 700;"
-			"	font-size:35px;"
-			"	color:white;"
-			"	border-color:white;"
-			"   border-width:0px;"
-			"	border-style:solid;"
-			"	background-color:rgb(128, 128, 128);"
-		);
-		ui->pushButtonStart->setText("▶");
+	if (pItemStatus->text().compare(u8"启动成功")) {
+		updatePlayBtn(true);
 		return;
 	}
-	ui->pushButtonStart->setStyleSheet("QPushButton {"
-		"	font: 700;"
-		"	font-size:25px;"
-		"	color:white;"
-		"	border-radius:25px;"
-		"   border-width:3px;"
-		"	border-style:solid;"
-		"	border-color: white;"
-		"	background-color:transparent;"
-		"}"
-		"QPushButton:hover {"
-		"	font: 700;"
-		"	font-size:25px;"
-		"	color: rgb(128, 128, 128);"
-		"	border-radius:25px;"
-		"    border-width:3px;"
-		"	border-style:solid;"
-		"	background-color:white;"
-		"}"
-		"QPushButton:pressed {"
-		"	font: 700;"
-		"	font-size:25px;"
-		"	color:white;"
-		"	border-color:white;"
-		"   border-width:0px;"
-		"	border-style:solid;"
-		"	background-color:rgb(128, 128, 128);"
-	);
-	ui->pushButtonStart->setText("||");
+	updatePlayBtn(false);
 }
 

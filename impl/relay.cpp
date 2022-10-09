@@ -16,6 +16,7 @@ Relay::~Relay()
 	qDebug() << "relay deconstruct";
 }
 
+
 std::shared_ptr<BaseConn> Relay::getBackend()
 {
 	return m_spBackend;

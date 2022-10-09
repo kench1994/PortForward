@@ -33,7 +33,7 @@ void Frontend::stop()
 		m_spSocket->shutdown(boost::asio::socket_base::shutdown_receive);
 		m_uShutdownState |= 0x01;
 	}
-	if (!(m_uShutdownState & 0x01)) {
+	if (!(m_uShutdownState & 0x10)) {
 		m_spSocket->shutdown(boost::asio::socket_base::shutdown_send);
 		m_uShutdownState |= 0x10;
 	}

@@ -42,12 +42,15 @@ public:
 protected:
 	int beginListen();
 	
+	void stopListen();
+
 	void onListen(\
 		std::shared_ptr<boost::asio::ip::tcp::socket> spSocket, 
 		const boost::system::error_code& ec
 	);
 
 private:
+	std::mutex m_mtxNotifyConnCont;
 	fntNotifyForwardConnCnt m_fnNotifyConnCnt;
 
 	std::shared_ptr<Forwarder> m_spForwarder;

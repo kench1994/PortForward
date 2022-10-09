@@ -28,7 +28,7 @@ Forwarder::~Forwarder()
 int Forwarder::start()
 {
 	//不重复开启端口监听
-	if (m_spAcceptor || m_abOnListen.load(std::memory_order::memory_order_relaxed))
+	if (m_spAcceptor || m_abOnListen.load(std::memory_order::memory_order_acquire))
 		return 0;
 
 	boost::asio::ip::tcp::endpoint ep(boost::asio::ip::tcp::v4(), m_uPort);
@@ -45,6 +45,8 @@ int Forwarder::start()
 	//流量速率计算
 	m_spRater->start();
 
+	m_abOnListen.store(true, std::memory_order::memory_order_release);
+
 	//开启监听
 	beginListen();
 	return 0;
@@ -53,19 +55,31 @@ int Forwarder::start()
 
 void Forwarder::stop()
 {
-	if(m_spAcceptor)
+	if (m_spAcceptor) {
 		m_spAcceptor->close();
-	m_abOnListen.store(false, std::memory_order::memory_order_relaxed);
+		m_spAcceptor.reset();
+	}
+	stopListen();
+
+	m_spRater->stop();
+	//清空relay
+	std::unordered_map<unsigned int, std::shared_ptr<Relay>> empty;
+	std::lock_guard<std::mutex> lck(m_mtxRelays);
+	for (auto& iter : m_mapRelays) {
+		auto spFront = iter.second->getFrontend();
+		auto spBackend = iter.second->getBackend();
+		spFront->stop();
+		spBackend->stop();
+	}
+	m_mapRelays.swap(empty);
 }
 
 
 int Forwarder::beginListen()
 {
 	try {
-		if (!m_spAcceptor || !m_spAcceptor->is_open())
+		if (!m_spAcceptor || !m_spAcceptor->is_open() || !m_abOnListen.load(std::memory_order::memory_order_acquire))
 			return false;
-
-		m_abOnListen.store(true, std::memory_order::memory_order_relaxed);
 
 		auto spSocket = std::make_shared<boost::asio::ip::tcp::socket>(m_spAcceptor->get_executor());
 		m_spAcceptor->async_accept(*spSocket, \
@@ -80,12 +94,18 @@ int Forwarder::beginListen()
 	return true;
 }
 
+void Forwarder::stopListen()
+{
+	m_abOnListen.store(false, std::memory_order::memory_order_release);
+}
+
 void Forwarder::onListen(\
 	std::shared_ptr<boost::asio::ip::tcp::socket> spSocket,
 	const boost::system::error_code& ec
 )
 {
 	if (ec) {
+		stopListen();
 		//告知前端异常
 		return;
 	}
@@ -97,11 +117,15 @@ void Forwarder::onListen(\
 	auto spFrontend = std::make_shared<Frontend>(); spFrontend->setRole("Front-end"); std::weak_ptr<Frontend> wspFront(spFrontend);
 	auto spBackend = std::make_shared<Backend>(); spBackend->setRole("Back-end"); std::weak_ptr<Backend> wspBack(spBackend);
 
-	spFrontend->initial(std::move(spSocket), [wspBack, this](boost::shared_array<char>&& spszBuff, unsigned int uBufLen, const int& nError, const char* pszErrInfo) {
+	spFrontend->initial(std::move(spSocket), [wspBack, wspFront, this](boost::shared_array<char>&& spszBuff, unsigned int uBufLen, const int& nError, const char* pszErrInfo) {
+
+		std::shared_ptr<Frontend> spFrontend{ nullptr };
+		if (wspFront.expired() || CHECK_PROMT_WSP_FAILED(spFrontend, wspFront))
+			return;
 
 		qDebug() << "Front-end flow in " << uBufLen; 
 		
-		std::shared_ptr<Backend> spBackend;
+		std::shared_ptr<Backend> spBackend{ nullptr };
 		if (wspBack.expired() || CHECK_PROMT_WSP_FAILED(spBackend, wspBack))
 			return;
 
@@ -118,7 +142,11 @@ void Forwarder::onListen(\
 
 		m_spRater->upload_work(uBufLen);
 
-	}, [this, id](const int& nErrorCode, const char* pszErrInfo){
+	}, [this, id, wspFront](const int& nErrorCode, const char* pszErrInfo){
+
+		std::shared_ptr<Frontend> spFrontend{ nullptr };
+		if (wspFront.expired() || CHECK_PROMT_WSP_FAILED(spFrontend, wspFront))
+			return;
 
 		assert(nErrorCode);
 
@@ -132,12 +160,15 @@ void Forwarder::onListen(\
 	});
 
 	//TODO：通知前端
-	spBackend->initial(m_spNodeInfo, [wspFront, this](boost::shared_array<char>&& spszBuff, unsigned int uBufLen, const int& nError, const char* pszErrInfo) {
+	spBackend->initial(m_spNodeInfo, [wspFront, wspBack, this](boost::shared_array<char>&& spszBuff, unsigned int uBufLen, const int& nError, const char* pszErrInfo) {
 
+		std::shared_ptr<Backend> spBackend{ nullptr };
+		if (wspBack.expired() || CHECK_PROMT_WSP_FAILED(spBackend, wspBack))
+			return;
 
 		qDebug() << "Back-end flow in " << uBufLen;
 
-		std::shared_ptr<Frontend> spFrontend = nullptr;
+		std::shared_ptr<Frontend> spFrontend{ nullptr };
 		if (wspFront.expired() || CHECK_PROMT_WSP_FAILED(spFrontend, wspFront))
 			return;
 
@@ -155,14 +186,18 @@ void Forwarder::onListen(\
 
 		m_spRater->download_work(uBufLen);
 
-	}, [this, id, wspFront](const int& nErrorCode, const char* pszErrInfo){
+	}, [this, id, wspFront, wspBack](const int& nErrorCode, const char* pszErrInfo){
+
+		std::shared_ptr<Backend> spBackend{ nullptr };
+		if (wspBack.expired() || CHECK_PROMT_WSP_FAILED(spBackend, wspBack))
+			return;
 
 		if(0 == nErrorCode){
 
 			qDebug() << "Back-end has connected to downward server";
 			
 			//开启 incommer 通道
-			std::shared_ptr<Frontend> spFrontend;
+			std::shared_ptr<Frontend> spFrontend{ nullptr };
 			if (wspFront.expired() || CHECK_PROMT_WSP_FAILED(spFrontend, wspFront))
 				return;
 
@@ -171,13 +206,14 @@ void Forwarder::onListen(\
 			spFrontend->doRecv();
 			
 			//统计的是后端连接数
+			std::unique_lock<std::mutex> lck2(m_mtxNotifyConnCont);
 			if (m_fnNotifyConnCnt) {
 				std::unique_lock<std::mutex> lck(m_mtxRelays);
 				auto uConnCnt = m_mapRelays.size();
 				lck.unlock();
-
 				m_fnNotifyConnCnt(m_uPort, uConnCnt);
 			}
+			lck2.unlock();
 			return;
 		}
 
@@ -197,7 +233,10 @@ void Forwarder::onListen(\
 	m_mapRelays[id] = std::move(std::make_shared<Relay>(spFrontend, spBackend));
 	lck.unlock();
 
-	IO_EXCUTOR.pick_io_service()->post([spBackend]() {
+	IO_EXCUTOR.pick_io_service()->post([wspBack]() {
+		std::shared_ptr<Backend> spBackend{ nullptr };
+		if (wspBack.expired() || CHECK_PROMT_WSP_FAILED(spBackend, wspBack))
+			return;
 		spBackend->connRemote();
 	});
 
@@ -222,13 +261,16 @@ std::shared_ptr<Relay> Forwarder::delRelay(const unsigned int id)
 	lck.unlock();
 
 	//trick析构的时候重新通知连接数,因为tcp函数不一定通知到
+	std::unique_lock<std::mutex> lck2(m_mtxNotifyConnCont);
 	if (m_fnNotifyConnCnt)
 		m_fnNotifyConnCnt(m_uPort, uConnCnt);
+	lck2.unlock();
 	return spRelay;
 }
 
 void Forwarder::setNotifyConnCnt(const fntNotifyForwardConnCnt &fnNotify)
 {
+	std::unique_lock<std::mutex> lck(m_mtxNotifyConnCont);
 	m_fnNotifyConnCnt = fnNotify;
 }
 

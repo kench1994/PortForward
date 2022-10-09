@@ -31,15 +31,17 @@ public:
 	void shutdown(const unsigned int u);
 private:
 
-	void onSend(const boost::system::error_code& ec, const std::shared_ptr<PACKET>& spPacket);
+	void onSend(const boost::system::error_code& ec, const std::shared_ptr<PACKET>& spPacket, std::weak_ptr<BaseConn> wspThis);
 
 	void onRecv(const boost::system::error_code& ec,
 		size_t  uRecvSize,
-		boost::shared_array<char>spszBuff
+		boost::shared_array<char>spszBuff,
+		std::weak_ptr<BaseConn> wspThis
 	);
 
 	std::string m_strRole;
 protected:
+	std::mutex m_mtxShutdownState;
 	//0位接收,1位发送,置1表示关闭
 	unsigned int m_uShutdownState;
 

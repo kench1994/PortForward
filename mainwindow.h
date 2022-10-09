@@ -24,6 +24,8 @@ public:
 protected:
     void updateBtns();
 
+	void updatePlayBtn(bool bOnPlay);
+
     void changeBtnState(QPushButton* pBtn);
 
     void setBtnState(QPushButton* pBtn, bool bEnable);
@@ -44,6 +46,7 @@ protected:
 
 	std::shared_ptr<Forwarder> addForwarder(const unsigned int uBindPort, const char* pszBindPort, const char* pszServer);
 
+	void onConnCntChanged(unsigned int uListenPort, unsigned int uConnCnt);
 private slots:
     void on_pushButtonAdd_clicked();
 

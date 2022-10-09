@@ -37,12 +37,13 @@ int Backend::initial(const std::shared_ptr<NodeInfo>& spNodeInfo, \
 
 void Backend::stop()
 {
+	std::unique_lock<std::mutex> lck(m_mtxShutdownState);
 	if (!(m_uShutdownState & 0x01)) {
-		m_spSocket->shutdown(boost::asio::socket_base::shutdown_receive);
+		m_spSocket ? m_spSocket->shutdown(boost::asio::socket_base::shutdown_receive) : 0;
 		m_uShutdownState |= 0x01;
 	}
-	if (!(m_uShutdownState & 0x01)) {
-		m_spSocket->shutdown(boost::asio::socket_base::shutdown_send);
+	if (!(m_uShutdownState & 0x10)) {
+		m_spSocket ? m_spSocket->shutdown(boost::asio::socket_base::shutdown_send) : 0;
 		m_uShutdownState |= 0x10;
 	}
 }
