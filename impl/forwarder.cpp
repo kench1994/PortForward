@@ -31,7 +31,7 @@ int Forwarder::start()
 	if (m_spAcceptor || m_abOnListen.load(std::memory_order::memory_order_acquire))
 		return 0;
 
-	boost::asio::ip::tcp::endpoint ep(boost::asio::ip::tcp::v4(), m_uPort);
+	boost::asio::ip::tcp::endpoint ep(boost::asio::ip::tcp::v6(), m_uPort);
 
 	m_spAcceptor = std::make_shared<boost::asio::ip::tcp::acceptor>(\
 		*utils::io_service_pool::instance().pick_io_service(), \
