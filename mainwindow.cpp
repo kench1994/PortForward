@@ -9,6 +9,29 @@
 #include <boost/algorithm/string.hpp>
 #include "utils/io_service_pool.hpp"
 #include "GuiThreadRun.hpp"
+
+inline bool split_ipport(const std::string& strHostPort, std::string& strHost, std::string& strPort)
+{
+	auto npos = strHostPort.find_last_of(":");
+	if (std::string::npos == npos)
+		return false;
+	std::string host(strHostPort.data(), npos), port(strHostPort.data() + npos + 1);
+	try {
+		atoi(port.data());
+	} catch (...) {
+		return false;
+	}
+	//check is valid ip address use boost
+	boost::system::error_code invalid;
+	boost::asio::ip::address::from_string(host, invalid);
+	if (invalid)
+		return false;
+	strHost = std::move(host);
+	strPort = std::move(port);
+	return true;
+}
+
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
@@ -66,6 +89,8 @@ void MainWindow::updateBtns()
             break;
     }
 }
+
+
 
 void MainWindow::updatePlayBtn(bool bOnPlay)
 {
@@ -495,13 +520,13 @@ void MainWindow::on_pushButtonOk_clicked()
     }
 
     //TODO:判断其他参数合法
-    auto qstrListHostInfo = qstrHost.split(":");
-    if(2 != qstrListHostInfo.size() || !qstrListHostInfo[1].toUInt()) {
+	std::string strHost, strPort, strIpPort(qstrHost.toUtf8());
+	if(!split_ipport(strIpPort, strHost, strPort))
+	{
         QMessageBox::information(this, "information", "下游服务器非法输入");
         return;
     }
 
-	std::string strHost = qstrListHostInfo[0].toUtf8(), strPort = qstrListHostInfo[1].toUtf8();
 	auto spForwarder = addForwarder(uBindPort, strHost.c_str(), strPort.c_str());
 
 
