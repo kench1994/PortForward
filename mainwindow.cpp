@@ -365,7 +365,7 @@ std::shared_ptr<Forwarder> MainWindow::addForwarder(const unsigned int uBindPort
 				if (!pItem)
 					continue;
 				char szRate[32]{0};
-				sprintf_s(szRate, 31, "%.2fkb/s ↑\n%.2fkb/s ↓", uUpBytes / 1000.0, uDownBytes / 1000.0);
+				sprintf_s(szRate, 31, u8"%.2fkb/s ↑\n%.2fkb/s ↓", uUpBytes / 1000.0, uDownBytes / 1000.0);
 				QString qstrRate = QString::fromUtf8(szRate);
 				auto updateRate = [pItem, qstrRate]() {
 					pItem->setText(qstrRate);
